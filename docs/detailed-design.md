@@ -17,12 +17,14 @@
   - [Stage 6. Phase Implementation Loop](#stage-6-phase-implementation-loop)
   - [Stage 7. Validation Testing](#stage-7-validation-testing)
   - [Stage 8. Final Documentation Review](#stage-8-final-documentation-review)
+- [Flow Control](#flow-control)
 - [Agent Roles](#agent-roles)
 - [Orchestrator](#orchestrator)
 - [Review Issue Format](#review-issue-format)
 - [Run History](#run-history)
 - [Context Bundles](#context-bundles)
 - [Phase Gate Rules](#phase-gate-rules)
+- [Change Control And Iteration](#change-control-and-iteration)
 - [Commit Strategy](#commit-strategy)
 - [Handling Disagreements](#handling-disagreements)
 - [Test Review Expectations](#test-review-expectations)
@@ -179,6 +181,15 @@ sequenceDiagram
     O->>DOC: Verify documentation fixes
     O->>S: Store final docs snapshots and event
     O-->>H: Report completed pipeline
+
+    opt Later requirement or design iteration
+        H->>O: Open change request
+        O->>S: Record request and affected baseline
+        O->>DA: Reopen requirements or design stage
+        DA-->>O: Update affected artifact
+        O->>S: Invalidate affected downstream gates
+        O->>O: Resume ordered pipeline from reopened stage
+    end
 ```
 
 ```mermaid
@@ -213,12 +224,19 @@ stateDiagram-v2
 
     ValidationTesting: Validate complete codebase
     ValidationTesting --> PhaseImplementation: validation issues found
+    ValidationTesting --> ChangeControl: requirement or design gap
     ValidationTesting --> DocumentationReview: requirements and design pass
 
     DocumentationReview: Verify docs against requirements and code
     DocumentationReview --> PhaseImplementation: implementation conflict
-    DocumentationReview --> DesignDraft: requirements or design drift
+    DocumentationReview --> ChangeControl: requirements or design drift
     DocumentationReview --> Complete: documentation verified
+    Complete --> ChangeControl: new iteration requested
+
+    ChangeControl: Classify earliest affected baseline
+    ChangeControl --> RequirementsPlanning: requirements update
+    ChangeControl --> DesignDraft: design-only update
+    ChangeControl --> ImplementationPlanning: plan-only update
     Complete --> [*]
 ```
 
@@ -228,6 +246,8 @@ stateDiagram-v2
   collaborator.
 - Capture system requirements in `docs/requirements.md` before the design is
   finalized.
+- Enforce an ordered pipeline so implementation cannot begin before
+  requirements and design are approved.
 - Convert an approved design into a detailed implementation strategy with small,
   reviewable phases.
 - Require the human operator and Design Author Agent to agree on
@@ -241,6 +261,8 @@ stateDiagram-v2
   guessing.
 - Preserve a complete run history of agent steps, review comments, decisions,
   verification results, commands, tests, and commits.
+- Support controlled iteration when completed work exposes a requirements or
+  design change.
 
 ## Non-Goals
 
@@ -302,6 +324,7 @@ Directory layout:
     <run-id>/
       manifest.json
       activity-log.jsonl
+      change-requests.jsonl
       design-review.jsonl
       phase-<n>-code-review.jsonl
       phase-<n>-test-review.jsonl
@@ -320,9 +343,10 @@ Directory layout:
   decisions.jsonl
 ```
 
-The files in this directory capture review issues, decisions, phase status, and
-run metadata. They are not a substitute for the source documents. They give the
-orchestrator and agents a reliable way to resume work and audit past decisions.
+The files in this directory capture review issues, change requests, decisions,
+phase status, and run metadata. They are not a substitute for the source
+documents. They give the orchestrator and agents a reliable way to resume work
+and audit past decisions.
 
 `activity-log.jsonl` is the append-only timeline for the run. It records every
 agent step, review pass, response, verification, test command, gate decision,
@@ -341,6 +365,11 @@ locations, and the run snapshots preserve the exact versions used at stage
 gates and approvals.
 
 ## Pipeline Stages
+
+The stages are ordered. A run starts with requirements definition and advances
+only when the current stage gate passes. Operators can pause, resume, inspect
+state, or request a change-control iteration, but they cannot mark a later
+stage active without the required earlier approvals and snapshots.
 
 ### Stage 1. Requirements Definition
 
@@ -525,6 +554,41 @@ Exit criteria:
 - The README is complete enough for a new contributor to follow successfully.
 - Design documentation reflects the final implementation.
 
+## Flow Control
+
+The orchestrator treats the pipeline as a durable state machine. Each run has
+one active stage, one active phase when implementation is underway, and a set
+of approved artifact snapshots. Stage commands are valid only when the
+requested command matches the run state and the required predecessor gates have
+passed.
+
+This rule enforces the software engineering discipline of requirements before
+design, design before implementation planning, and reviewed implementation
+planning before code. An operator cannot start code review, testing,
+validation, or documentation review for a run that has not passed the earlier
+requirements and design gates.
+
+Allowed operator actions:
+
+- Start a new run at requirements definition.
+- Resume the active stage recorded in the run manifest.
+- Inspect status, history, gates, issues, decisions, and artifacts.
+- Approve a gate when the gate's documented criteria are satisfied.
+- Open a change-control request that reopens an earlier baseline.
+
+Blocked operator actions:
+
+- Start a later stage without all predecessor gates passing.
+- Mark a stage complete without the required artifact snapshot.
+- Start phase implementation before implementation planning is approved.
+- Commit a phase before code review and phase test review pass.
+- Start final documentation review before validation testing passes.
+
+Human waiver is available only for individual review issues or documented gate
+exceptions. A waiver does not allow the pipeline to skip requirements,
+reviewed design, implementation planning, validation testing, or final
+documentation review.
+
 ## Agent Roles
 
 Requirements definition is owned by the Design Author Agent and the human
@@ -699,6 +763,7 @@ order and preserve state.
 Responsibilities:
 
 - Assign the active stage and active implementation phase.
+- Reject commands that do not match the active stage or allowed transition.
 - Provide each agent with the correct context bundle.
 - Reconstruct reviewer context from artifacts, issue records, decisions,
   activity-log events, diffs, and test output.
@@ -706,6 +771,7 @@ Responsibilities:
 - Append every agent action, review pass, response, verification, command, and
   commit to the run activity log.
 - Store approved pipeline artifact snapshots in the run artifact directory.
+- Enforce predecessor gates before any stage transition.
 - Prevent formal design review before the requirements baseline is approved.
 - Prevent implementation planning before human acceptance of the reviewed
   design.
@@ -714,8 +780,7 @@ Responsibilities:
   `docs/implementation-plan.md`.
 - Prevent a phase commit before code review and test review are complete.
 - Prevent final documentation review before validation testing passes.
-- Return work to the requirements and design stages when later review exposes a
-  requirements gap, conflict, or drift.
+- Route later requirements or design discoveries through change control.
 - Halt and request human input when agents disagree about design intent or
   scope.
 - Record decisions that affect future phases.
@@ -919,6 +984,15 @@ state to avoid contradictory work.
 
 The pipeline enforces gates with explicit checks.
 
+Stage order gate:
+
+- The run manifest exists.
+- The requested command matches the active stage or an allowed transition.
+- All predecessor gates for the requested stage have passed.
+- No unresolved change-control request invalidates the requested stage.
+- Required artifact snapshots exist for every completed predecessor stage.
+- The activity log records the stage transition that made the command valid.
+
 Requirements gate:
 
 - `docs/requirements.md` exists.
@@ -932,6 +1006,7 @@ Design gate:
 
 - `docs/requirements.md` exists.
 - `docs/detailed-design.md` exists.
+- The requirements gate has passed.
 - The design maps approved requirements to architecture and behavior.
 - Design review has no unresolved blocker or major issues.
 - Escalated issues have human decisions.
@@ -949,6 +1024,7 @@ Implementation gate:
 
 - `docs/requirements.md` exists.
 - `docs/implementation-plan.md` exists.
+- Requirements, design, and human design acceptance gates have passed.
 - The human operator has approved `docs/implementation-plan.md`.
 - The Design Author Agent has confirmed plan alignment with the reviewed
   design.
@@ -960,12 +1036,14 @@ Implementation gate:
 
 Code review gate:
 
+- The implementation gate has passed.
 - Code review has no unresolved blocker or major issues for the active phase.
 - Code review has checked the active phase against relevant requirements.
 - Rejected code review issues have reviewer verification or human waiver.
 
 Phase test review gate:
 
+- The code review gate has passed.
 - Required tests pass.
 - Test review has no unresolved blocker or major issues for the active phase.
 - Test review has checked coverage of relevant requirements.
@@ -973,6 +1051,7 @@ Phase test review gate:
 
 Commit gate:
 
+- The implementation gate has passed.
 - Working tree changes belong to the active phase.
 - Code review and phase test review gates pass.
 - Commit message identifies the phase and the completed objective.
@@ -980,6 +1059,7 @@ Commit gate:
 Validation testing gate:
 
 - All planned phases are committed.
+- The commit gate has passed for every planned phase.
 - The full test suite passes.
 - Validation testing has checked the completed codebase against
   `docs/requirements.md`.
@@ -993,12 +1073,52 @@ Documentation gate:
 
 - `docs/requirements.md`, `docs/detailed-design.md`, `README.md`, and
   `docs/api.md` exist.
+- The validation testing gate has passed.
 - Documentation review has no unresolved blocker or major issues.
-- Validation testing gate has passed.
 - The documented requirements match the implemented behavior.
 - The documented API matches the implemented public API.
 - Final documentation snapshots are stored under the run artifact directory.
 - The run activity log contains review and verification events for every stage.
+
+## Change Control And Iteration
+
+Iteration is supported through controlled re-entry into the ordered pipeline.
+The operator, Test Review Agent, Documentation Agent, Design Review Agent, or
+Coding Agent can open a change-control request when later work exposes a
+missing requirement, incorrect requirement, design drift, implementation-plan
+gap, or completed-pipeline enhancement.
+
+The orchestrator records each request in the activity log and links it to a
+decision record. The request identifies the earliest affected baseline:
+
+- Requirements update reopens Stage 1.
+- Design-only update reopens Stage 2.
+- Implementation-plan update reopens Stage 5.
+- Implementation defect reopens the relevant Stage 6 phase or creates a new
+  corrective phase.
+- Documentation-only correction stays in Stage 8.
+
+Reopening an earlier baseline invalidates every downstream gate and artifact
+snapshot that depended on the changed baseline. The invalidated records remain
+in the run history for audit, but they no longer authorize later stages. The
+pipeline resumes from the reopened stage and advances through the normal gate
+sequence again.
+
+Completed runs can also iterate through the same mechanism. A new requirement
+or design change after completion creates a change-control request, reopens the
+earliest affected stage, and produces a new set of approved snapshots,
+implementation phases, validation results, and final documentation records.
+
+Iteration rules:
+
+- The run history is append-only.
+- Older approvals remain historical records, not active authorization.
+- The requirements baseline is updated before dependent design changes.
+- The detailed design is updated before dependent implementation-plan changes.
+- Implementation resumes only after the new requirements, design, and plan
+  gates pass.
+- Validation testing and documentation review run again after affected code or
+  public behavior changes.
 
 ## Commit Strategy
 
@@ -1053,7 +1173,7 @@ Escalated issue:
 Requirements change:
 
 - A later stage finds a missing, conflicting, or incorrect requirement.
-- The orchestrator returns to requirements definition and design exploration.
+- The orchestrator opens a change-control request.
 - The human operator and Design Author Agent update the affected artifacts.
 - Downstream stages resume only after the updated gates pass.
 
@@ -1137,6 +1257,10 @@ The baseline deployment model is a local CLI-driven workflow. The orchestrator
 invokes agents through role-specific prompts, stores issue records, and requires
 explicit gate checks before moving to the next stage.
 
+The CLI enforces the same ordered state machine as the design. Operator
+commands can inspect state at any time, but mutating commands are accepted only
+when they match the active stage or an allowed change-control transition.
+
 The architecture includes extension points for a service layer, dashboard,
 queue, and GitHub integration. Those extensions preserve the same core model.
 Agents remain specialized, artifacts remain durable, and phase gates remain
@@ -1148,18 +1272,22 @@ explicit.
    templates.
 2. Implement a minimal orchestrator that runs the requirements and design
    loops.
-3. Add human design acceptance and implementation-plan approval gates.
-4. Add approved artifact snapshots under each run directory.
-5. Add implementation phase tracking and phase gate checks.
-6. Add code review and test review loops for one phase at a time.
-7. Add validation testing against requirements and design.
-8. Add commit automation after gates pass.
-9. Add the final documentation review pass.
-10. Add resume support from `.agent-pipeline/` state.
+3. Add ordered stage transition enforcement.
+4. Add human design acceptance and implementation-plan approval gates.
+5. Add approved artifact snapshots under each run directory.
+6. Add change-control reopening and downstream gate invalidation.
+7. Add implementation phase tracking and phase gate checks.
+8. Add code review and test review loops for one phase at a time.
+9. Add validation testing against requirements and design.
+10. Add commit automation after gates pass.
+11. Add the final documentation review pass.
+12. Add resume support from `.agent-pipeline/` state.
 
 ## Design Decisions
 
 - The baseline orchestrator is a local CLI workflow.
+- The orchestrator enforces an ordered state machine for all mutating stage
+  commands.
 - Agent runtimes are isolated behind role adapters.
 - `docs/requirements.md` is the source of truth for required system behavior.
 - Design, implementation planning, code review, test review, and final
@@ -1181,6 +1309,8 @@ explicit.
   `.agent-pipeline/runs/<run-id>/messages/`.
 - Approved pipeline artifacts are stored as snapshots under
   `.agent-pipeline/runs/<run-id>/artifacts/`.
+- Change-control requests reopen the earliest affected baseline and invalidate
+  downstream gates that depended on the old baseline.
 - Phase status is stored in `.agent-pipeline/phase-status.json`.
 - Cross-stage decisions are stored in `.agent-pipeline/decisions.jsonl`.
 - Phase commits are created on the active working branch after gates pass.
