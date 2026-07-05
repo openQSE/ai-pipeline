@@ -2,34 +2,119 @@
 
 ## Purpose
 
-This project defines an agent pipeline for moving from a human-guided design conversation to reviewed, tested, documented implementation work. The workflow keeps the early creative design process interactive while automating the repetitive parts of review, code production, test assessment, and documentation verification.
+This project defines an agent pipeline for moving from a human-guided design
+conversation to reviewed, tested, documented implementation work. The workflow
+keeps the early creative design process interactive and automates the repeatable
+work of review, code production, test assessment, and documentation
+verification.
 
-The pipeline is built around a small set of specialized agents. Each agent has a narrow responsibility, a defined set of inputs, and a controlled authority over project artifacts. Reviews move through structured issue records so that agents can iterate without losing context or reopening settled decisions accidentally.
+The pipeline is built around a small set of specialized agents. Each agent has a
+narrow responsibility, a defined set of inputs, and a controlled authority over
+project artifacts. Reviews move through structured issue records so that agents
+iterate without losing context or reopening settled decisions accidentally.
 
-## Design Assessment
+## Design Approach
 
-The proposed workflow has the right shape for complex engineering work. It separates creative design from mechanical execution, gives review work to independent agents, and avoids large code dumps by forcing implementation through phases.
+The workflow separates creative design from mechanical execution. Independent
+review agents handle design, code, tests, and documentation. Implementation
+proceeds through bounded phases so that each unit of work is reviewed, tested,
+and committed before the next unit begins.
 
-The main risks are coordination drift, unclear authority, and unbounded review loops. Coordination drift happens when agents act on slightly different versions of the design, implementation plan, or code. Authority becomes unclear when reviewers start rewriting artifacts instead of producing review findings. Review loops can stall if the pipeline lacks explicit rules for issue severity, acceptance, rejection, and escalation.
+The design controls coordination drift by using versioned artifacts and
+machine-readable run state. It keeps authority clear by giving each agent a
+narrow ownership boundary. Review loops terminate through explicit issue
+severity, acceptance, rejection, deferral, escalation, and verification rules.
 
-The design addresses those risks with versioned artifacts, role boundaries, phase gates, structured review issues, and loop exit criteria. The human operator remains the final authority for design intent and disputed tradeoffs.
+The human operator remains the final authority for design intent and disputed
+tradeoffs. Automated agents perform the repeatable work inside those boundaries.
+
+## Workflow Overview
+
+A sequence diagram is the most useful first view of the pipeline because the
+core behavior is a set of handoffs between specialized agents. A state diagram
+is better suited for the gate state machine and can be added when the
+orchestrator state model is specified in more detail.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as Human Operator
+    participant O as Orchestrator
+    participant DA as Design Author
+    participant DR as Design Reviewer
+    participant C as Coding Agent
+    participant CR as Code Reviewer
+    participant TR as Test Reviewer
+    participant DOC as Documentation Agent
+    participant G as Git Repository
+
+    H->>DA: Explore design with ElectroBoy
+    DA-->>H: Draft docs/detailed-design.md
+    H->>O: Approve design for formal review
+
+    loop Until design issues are resolved
+        O->>DR: Review docs/detailed-design.md
+        DR-->>DA: Return structured review issues
+        DA-->>O: Update design or record rationale
+        O->>DR: Verify issue resolution
+    end
+
+    O->>DA: Create docs/implementation-plan.md
+    H->>O: Accept reviewed design and phase plan
+
+    loop For each implementation phase
+        O->>C: Start active phase
+        C-->>O: Implement phase changes
+
+        loop Until code review passes
+            O->>CR: Review active phase diff
+            CR-->>C: Return code review issues
+            C-->>O: Fix accepted issues
+            O->>CR: Verify code fixes
+        end
+
+        loop Until test review passes
+            O->>TR: Run tests and review test coverage
+            TR-->>C: Return test gaps or failures
+            C-->>O: Add tests or fix behavior
+            O->>CR: Review new code or tests
+            O->>TR: Re-run tests and verify coverage
+        end
+
+        O->>G: Commit verified phase
+    end
+
+    O->>DOC: Review final documentation
+    DOC-->>O: Return documentation issues
+    O->>C: Request code clarification when needed
+    O->>DOC: Verify documentation fixes
+    O-->>H: Report completed pipeline
+```
 
 ## Goals
 
-- Preserve the human-led design process with ElectroBoy as the primary design collaborator.
-- Convert an approved design into a detailed implementation strategy with small, reviewable phases.
-- Run design review, code review, and test review as separate loops with clear completion gates.
-- Require each implementation phase to be coded, reviewed, tested, and committed before the next phase begins.
+- Preserve the human-led design process with ElectroBoy as the primary design
+  collaborator.
+- Convert an approved design into a detailed implementation strategy with small,
+  reviewable phases.
+- Run design review, code review, and test review as separate loops with clear
+  completion gates.
+- Require each implementation phase to be coded, reviewed, tested, and committed
+  before the next phase begins.
 - Keep documentation synchronized with the final codebase.
-- Produce enough persistent state that interrupted agent runs can resume without guessing.
+- Produce enough persistent state for interrupted agent runs to resume without
+  guessing.
 
 ## Non-Goals
 
-- The pipeline does not automate the initial exploratory design conversation.
+- The pipeline does not automate the early exploratory design conversation.
 - The pipeline does not let every agent edit every artifact.
-- The pipeline does not merge unrelated phases into one large implementation pass.
-- The pipeline does not treat a passing test suite as proof that tests are comprehensive.
-- The pipeline does not replace human judgment for disputed architecture decisions.
+- The pipeline does not merge unrelated phases into one large implementation
+  pass.
+- The pipeline does not treat a passing test suite as proof that tests are
+  comprehensive.
+- The pipeline does not replace human judgment for disputed architecture
+  decisions.
 
 ## Core Artifacts
 
@@ -37,25 +122,32 @@ The pipeline revolves around a small number of durable files.
 
 ### `docs/detailed-design.md`
 
-This file describes the target system. The design author agent owns updates during the design review loop. The documentation agent later verifies that the final code still matches it.
+This file describes the target system. The design author agent owns updates
+during the design review loop. The documentation agent later verifies that the
+final code still matches it.
 
 ### `docs/implementation-plan.md`
 
-This file breaks the approved design into implementation phases. Each phase should include scope, expected files or modules, acceptance criteria, test expectations, and dependency notes.
+This file breaks the approved design into implementation phases. Each phase
+includes scope, expected files or modules, acceptance criteria, test
+expectations, and dependency notes.
 
 ### `README.md`
 
-The README describes how to clone, build, configure, test, and operate the codebase. It is written for a new contributor or operator.
+The README describes how to clone, build, configure, test, and operate the
+codebase. It is written for a new contributor or operator.
 
 ### `docs/api.md`
 
-This file describes the public API exposed by the codebase. It includes public functions, classes, commands, configuration files, data formats, extension points, and stable behavior guarantees.
+This file describes the public API exposed by the codebase. It includes public
+functions, classes, commands, configuration files, data formats, extension
+points, and stable behavior guarantees.
 
 ### Agent State Directory
 
-The pipeline should keep machine-readable state under a dedicated directory such as `.agent-pipeline/`.
+The pipeline stores machine-readable state under `.agent-pipeline/`.
 
-Recommended layout:
+Directory layout:
 
 ```text
 .agent-pipeline/
@@ -70,13 +162,16 @@ Recommended layout:
   decisions.jsonl
 ```
 
-The files in this directory capture review issues, decisions, phase status, and run metadata. They are not a substitute for the source documents. They give the orchestrator and agents a reliable way to resume work and audit past decisions.
+The files in this directory capture review issues, decisions, phase status, and
+run metadata. They are not a substitute for the source documents. They give the
+orchestrator and agents a reliable way to resume work and audit past decisions.
 
 ## Agent Roles
 
 ### A. Design Author Agent
 
-The design author agent is the original design collaborator. In this project that role is ElectroBoy.
+The design author agent is the original design collaborator. In this project
+that role is ElectroBoy.
 
 Responsibilities:
 
@@ -88,8 +183,9 @@ Responsibilities:
 
 Authority:
 
-- May edit `docs/detailed-design.md`.
-- May propose updates to `docs/implementation-plan.md` when a design change affects phase structure.
+- Edits `docs/detailed-design.md`.
+- Proposes updates to `docs/implementation-plan.md` when a design change affects
+  phase structure.
 - Does not edit production code during design review.
 
 ### B. Design Review Agent
@@ -98,15 +194,17 @@ The design review agent challenges the design before implementation begins.
 
 Responsibilities:
 
-- Review the design for ambiguity, missing requirements, inconsistent assumptions, operational gaps, testability problems, security risks, and implementation hazards.
+- Review the design for ambiguity, missing requirements, inconsistent
+  assumptions, operational gaps, testability problems, security risks, and
+  implementation hazards.
 - Produce structured review issues for the design author agent.
 - Verify that design changes resolve review issues.
 - Distinguish required fixes from optional improvements.
 
 Authority:
 
-- May create and update design review issue records.
-- May suggest text, diagrams, and acceptance criteria.
+- Creates and updates design review issue records.
+- Suggests text, diagrams, and acceptance criteria.
 - Does not directly edit `docs/detailed-design.md`.
 
 ### C. Coding Agent
@@ -123,25 +221,31 @@ Responsibilities:
 
 Authority:
 
-- May edit production code, tests, build files, and developer documentation within the active phase.
-- May edit `README.md` or `docs/api.md` only when the active phase changes usage or public API details.
-- Does not modify the approved design unless the orchestrator sends the work back through the design loop.
+- Edits production code, tests, build files, and developer documentation within
+  the active phase.
+- Edits `README.md` or `docs/api.md` when the active phase changes usage or
+  public API details.
+- Does not modify the approved design unless the orchestrator sends the work
+  back through the design loop.
 
 ### D. Code Review Agent
 
-The code review agent reviews each phase after the coding agent completes the implementation pass.
+The code review agent reviews each phase after the coding agent completes the
+implementation pass.
 
 Responsibilities:
 
 - Review diffs against the active phase scope and the approved design.
-- Identify correctness bugs, maintainability problems, security issues, API inconsistencies, missing error handling, and risky deviations from local project style.
+- Identify correctness bugs, maintainability problems, security issues, API
+  inconsistencies, missing error handling, and risky deviations from local
+  project style.
 - Produce structured review issues for the coding agent.
-- Verify fixes before the phase can proceed.
+- Verify fixes before the phase proceeds.
 
 Authority:
 
-- May create and update code review issue records.
-- May request code changes and test changes.
+- Creates and updates code review issue records.
+- Requests code changes and test changes.
 - Does not directly edit implementation files.
 
 ### E. Test Review Agent
@@ -151,38 +255,45 @@ The test review agent evaluates both test execution and test quality.
 Responsibilities:
 
 - Run the project test suite.
-- Inspect existing tests for coverage of phase acceptance criteria, edge cases, failure modes, integration paths, and regression risk.
+- Inspect existing tests for coverage of phase acceptance criteria, edge cases,
+  failure modes, integration paths, and regression risk.
 - Propose new or revised tests when coverage is weak.
 - Re-run tests after the coding agent implements requested tests.
 - Verify that the test suite gives meaningful confidence for the active phase.
 
 Authority:
 
-- May create and update test review issue records.
-- May request tests from the coding agent.
+- Creates and updates test review issue records.
+- Requests tests from the coding agent.
 - Does not directly edit test files.
 
 ### F. Documentation Agent
 
-The documentation agent verifies final documentation after implementation work is complete.
+The documentation agent verifies final documentation after implementation work
+is complete.
 
 Responsibilities:
 
 - Compare `docs/detailed-design.md` with the implemented code.
-- Ensure `README.md` explains clone, build, configuration, test, and normal usage workflows.
-- Ensure `docs/api.md` documents the public API in enough detail for a downstream user or contributor.
+- Ensure `README.md` explains clone, build, configuration, test, and normal
+  usage workflows.
+- Ensure `docs/api.md` documents the public API in enough detail for a
+  downstream user or contributor.
 - Produce documentation review issues when code and docs diverge.
 - Verify documentation fixes before the project is considered complete.
 
 Authority:
 
-- May edit documentation files.
-- May request code clarification from the coding agent when the implementation is ambiguous.
+- Edits documentation files.
+- Requests code clarification from the coding agent when the implementation is
+  ambiguous.
 - Does not change production behavior.
 
 ## Orchestrator
 
-The orchestrator coordinates agents, artifacts, and phase gates. It can be a script, service, CLI command, or manual protocol at first. Its essential job is to enforce order and preserve state.
+The orchestrator coordinates agents, artifacts, and phase gates. The baseline
+implementation is a local CLI-driven workflow. Its essential job is to enforce
+order and preserve state.
 
 Responsibilities:
 
@@ -191,40 +302,51 @@ Responsibilities:
 - Store review issues in the agent state directory.
 - Prevent coding work before design review is complete.
 - Prevent a phase commit before code review and test review are complete.
-- Halt and request human input when agents disagree about design intent or scope.
+- Halt and request human input when agents disagree about design intent or
+  scope.
 - Record decisions that affect future phases.
 
-The orchestrator should treat each agent response as an input to a state transition. It should avoid relying on conversational memory as the only source of truth.
+The orchestrator treats each agent response as an input to a state transition.
+Durable artifacts and run state are the source of truth.
 
 ## Pipeline Stages
 
 ### Stage 1. Human-Led Design Exploration
 
-The human operator works with ElectroBoy to explore the design. This stage remains interactive and intentionally flexible. The output is a coherent draft of `docs/detailed-design.md`.
+The human operator works with ElectroBoy to explore the design. This stage
+remains interactive and intentionally flexible. The output is a coherent draft
+of `docs/detailed-design.md`.
 
 Exit criteria:
 
 - The human operator approves the design draft for formal review.
-- The design describes user goals, architecture, responsibilities, workflows, data flow, operational expectations, and known constraints.
+- The design describes user goals, architecture, responsibilities, workflows,
+  data flow, operational expectations, and known constraints.
 
 ### Stage 2. Automated Design Review
 
-The design review agent reviews `docs/detailed-design.md` and creates design review issues. The design author agent updates the document or responds with a rejection rationale.
+The design review agent reviews `docs/detailed-design.md` and creates design
+review issues. The design author agent updates the document or responds with a
+rejection rationale.
 
-The loop continues until every required issue is verified, downgraded, or escalated to the human operator.
+The loop continues until every required issue is verified, downgraded, or
+escalated to the human operator.
 
 Exit criteria:
 
 - No open blocker or major design review issues remain.
 - Minor issues are either fixed or explicitly deferred.
-- Any disputed design decisions are recorded in `.agent-pipeline/decisions.jsonl`.
+- Any disputed design decisions are recorded in
+  `.agent-pipeline/decisions.jsonl`.
 - The human operator accepts the reviewed design.
 
 ### Stage 3. Implementation Strategy
 
-The approved design is converted into `docs/implementation-plan.md`. The plan divides work into small phases that can be coded, reviewed, tested, and committed independently.
+The approved design is converted into `docs/implementation-plan.md`. The plan
+divides work into small phases that are coded, reviewed, tested, and committed
+independently.
 
-Each phase should include:
+Each phase includes:
 
 - Objective.
 - Scope.
@@ -239,7 +361,7 @@ Exit criteria:
 
 - Every phase has a bounded scope.
 - Dependencies between phases are explicit.
-- The first phase can begin without unresolved design questions.
+- The first phase begins without unresolved design questions.
 
 ### Stage 4. Phase Implementation Loop
 
@@ -282,14 +404,16 @@ Exit criteria:
 
 - No blocker or major documentation review issues remain.
 - Public API documentation matches the code.
-- The README can be followed by a new contributor.
+- The README is complete enough for a new contributor to follow successfully.
 - Design documentation reflects the final implementation.
 
 ## Review Issue Format
 
-Every review comment should be stored as a structured issue. A consistent format lets agents verify fixes and prevents duplicate findings from drifting across iterations.
+Every review comment is stored as a structured issue. A consistent format lets
+agents verify fixes and prevents duplicate findings from drifting across
+iterations.
 
-Recommended fields:
+Issue fields:
 
 ```json
 {
@@ -302,7 +426,7 @@ Recommended fields:
   "artifact": "docs/detailed-design.md",
   "location": "Section name or file:line",
   "summary": "The design does not define how review loops terminate.",
-  "rationale": "Without exit criteria the automated pipeline can cycle indefinitely.",
+  "rationale": "Without exit criteria the automated pipeline cycles indefinitely.",
   "requested_change": "Add loop termination criteria for each review stage.",
   "response": null,
   "verification": null
@@ -312,8 +436,8 @@ Recommended fields:
 Severity values:
 
 - `blocker` means the stage cannot proceed.
-- `major` means the stage should not proceed without a fix or human waiver.
-- `minor` means the issue should be fixed when practical.
+- `major` means the stage cannot proceed without a fix or human waiver.
+- `minor` means the issue is fixed when practical.
 - `nit` means the issue is cosmetic or editorial.
 
 Status values:
@@ -328,7 +452,8 @@ Status values:
 
 ## Context Bundles
 
-Each agent should receive only the context needed for its role, plus enough shared state to avoid contradictory work.
+Each agent receives only the context needed for its role, plus enough shared
+state to avoid contradictory work.
 
 ### Design Author Context
 
@@ -342,7 +467,7 @@ Each agent should receive only the context needed for its role, plus enough shar
 - Current `docs/detailed-design.md`.
 - Prior design review issues.
 - Relevant decisions.
-- Target implementation constraints, if known.
+- Target implementation constraints.
 
 ### Coding Agent Context
 
@@ -378,7 +503,7 @@ Each agent should receive only the context needed for its role, plus enough shar
 
 ## Phase Gate Rules
 
-The pipeline should enforce gates with explicit checks.
+The pipeline enforces gates with explicit checks.
 
 Design gate:
 
@@ -417,9 +542,11 @@ Documentation gate:
 
 ## Commit Strategy
 
-The coding agent creates one commit per completed phase. A phase may produce more than one commit only when the implementation plan explicitly calls for sub-phases or when a fix is easier to audit separately.
+The coding agent creates one commit per completed phase. Additional commits are
+reserved for phases that the implementation plan explicitly splits into
+sub-phases or fixes that are easier to audit separately.
 
-Recommended commit message shape:
+Commit message shape:
 
 ```text
 phase <n>: <short objective>
@@ -432,11 +559,14 @@ Review gates:
 - Tests: <command summary>
 ```
 
-The commit body should mention major design decisions only when they are important for future maintainers. Routine issue resolution belongs in review records, not in every commit message.
+The commit body mentions major design decisions only when they are important for
+future maintainers. Routine issue resolution belongs in review records, not in
+every commit message.
 
 ## Handling Disagreements
 
-Agents can disagree about severity, scope, or correctness. The pipeline should use a small set of resolution paths.
+Agents sometimes disagree about severity, scope, or correctness. The pipeline
+uses a small set of resolution paths.
 
 Accepted issue:
 
@@ -462,9 +592,10 @@ Escalated issue:
 
 ## Test Review Expectations
 
-The test review agent should evaluate tests against risk, not only line or branch coverage.
+The test review agent evaluates tests against risk, not only line or branch
+coverage.
 
-For each phase, it should check:
+For each phase, it checks:
 
 - Acceptance criteria from the implementation plan.
 - Primary success paths.
@@ -475,13 +606,15 @@ For each phase, it should check:
 - Regression risk from changed behavior.
 - Public API compatibility.
 
-When proposing tests, the test review agent should state the risk being covered and the expected failure mode if the test is missing. The coding agent then implements the requested tests and sends the changes through code review.
+When proposing tests, the test review agent states the risk being covered and
+the expected failure mode if the test is missing. The coding agent then
+implements the requested tests and sends the changes through code review.
 
 ## Documentation Expectations
 
-The final documentation pass should read the repository as a user would.
+The final documentation pass reads the repository from a user's perspective.
 
-`docs/detailed-design.md` should explain:
+`docs/detailed-design.md` explains:
 
 - System architecture.
 - Agent responsibilities.
@@ -490,7 +623,7 @@ The final documentation pass should read the repository as a user would.
 - Phase gates and completion criteria.
 - Operational assumptions and known limits.
 
-`README.md` should explain:
+`README.md` explains:
 
 - Repository purpose.
 - Prerequisites.
@@ -500,7 +633,7 @@ The final documentation pass should read the repository as a user would.
 - Basic usage.
 - Troubleshooting notes.
 
-`docs/api.md` should explain:
+`docs/api.md` explains:
 
 - Public modules, classes, functions, commands, or configuration files.
 - Input and output formats.
@@ -510,26 +643,34 @@ The final documentation pass should read the repository as a user would.
 
 ## Operational Model
 
-The first version can run as a local CLI-driven workflow. The orchestrator can invoke agents through prompts, store issue records, and require explicit gate checks before moving to the next stage.
+The baseline deployment model is a local CLI-driven workflow. The orchestrator
+invokes agents through role-specific prompts, stores issue records, and requires
+explicit gate checks before moving to the next stage.
 
-A later version can add a service layer, dashboard, queue, or GitHub integration. Those additions should preserve the same core model. Agents remain specialized, artifacts remain durable, and phase gates remain explicit.
+The architecture includes extension points for a service layer, dashboard,
+queue, and GitHub integration. Those extensions preserve the same core model.
+Agents remain specialized, artifacts remain durable, and phase gates remain
+explicit.
 
-## Suggested Initial Milestones
+## Build Milestones
 
 1. Define the document templates and review issue schema.
-2. Implement a minimal orchestrator that can run the design review loop.
+2. Implement a minimal orchestrator that runs the design review loop.
 3. Add implementation phase tracking and phase gate checks.
 4. Add code review and test review loops for one phase at a time.
 5. Add commit automation after gates pass.
 6. Add the final documentation review pass.
 7. Add resume support from `.agent-pipeline/` state.
 
-## Open Questions
+## Design Decisions
 
-- Should the orchestrator run as a CLI first, or should the first implementation expose a small service API?
-- Which agent runtime should be used for each role?
-- Should review issues be stored as JSONL, YAML, or a lightweight database?
-- Should phase commits be created directly on the main working branch or on per-run branches?
-- How much authority should the documentation agent have to edit `docs/detailed-design.md` after implementation changes?
-- Should human approval be required after every phase, only after escalations, or only at the final documentation gate?
-
+- The baseline orchestrator is a local CLI workflow.
+- Agent runtimes are isolated behind role adapters.
+- Review issues are stored as JSONL under `.agent-pipeline/runs/<run-id>/`.
+- Phase status is stored in `.agent-pipeline/phase-status.json`.
+- Cross-stage decisions are stored in `.agent-pipeline/decisions.jsonl`.
+- Phase commits are created on the active working branch after gates pass.
+- Human approval is required for reviewed design acceptance, escalated
+  decisions, and final completion.
+- Per-phase human approval is available as an orchestrator policy, but it is not
+  a default phase gate.
