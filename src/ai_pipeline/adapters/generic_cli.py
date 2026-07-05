@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -28,6 +29,7 @@ class GenericCliRuntime(AgentRuntime):
                 text=True,
                 capture_output=True,
                 cwd=self.root,
+                env=self._runtime_env(),
                 timeout=timeout,
                 check=False,
             )
@@ -50,6 +52,14 @@ class GenericCliRuntime(AgentRuntime):
 
     def _command(self, invocation: AgentInvocation) -> list[str]:
         return [self.config.command, *self.config.args]
+
+    def _runtime_env(self) -> dict[str, str]:
+        allowlist = self.config.env or ["PATH"]
+        return {
+            name: os.environ[name]
+            for name in allowlist
+            if name in os.environ
+        }
 
     def _build_prompt(self, invocation: AgentInvocation) -> str:
         context = "\n".join(f"- {path}" for path in invocation.context_paths)

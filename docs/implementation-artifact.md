@@ -103,3 +103,22 @@ Verification:
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
 ```
+
+## Phase 5. CLI Runtime Adapters
+
+Implemented:
+
+- Implemented subprocess-backed generic CLI runtime invocation.
+- Added prompt construction with role context paths.
+- Added stdout parsing for plain text and JSON agent results.
+- Implemented Codex JSONL parsing for final messages and raw events.
+- Added `ai-pipeline agent run` for configured role invocation.
+- Stored agent prompts, responses, raw runtime events, and activity events.
+- Added runtime adapter tests for generic JSON output and Codex JSONL output.
+
+Verification:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
+```

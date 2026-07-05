@@ -22,6 +22,8 @@ from .models import (
     STAGE_REQUIREMENTS,
     utc_now,
 )
+from .adapters.base import AgentInvocation
+from .runtime import runtime_for_role
 from .state_store import StateError, StateStore
 
 
@@ -70,6 +72,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     gate = subparsers.add_parser("gate", help="evaluate a named gate")
     gate.add_argument("gate")
+
+    agent = subparsers.add_parser("agent", help="invoke configured agent runtimes")
+    agent_subparsers = agent.add_subparsers(dest="agent_command", required=True)
+    agent_run = agent_subparsers.add_parser("run", help="run an agent role")
+    agent_run.add_argument("role")
+    agent_run.add_argument("--prompt", required=True)
+    agent_run.add_argument("--context", action="append", default=[])
 
     artifacts = subparsers.add_parser("artifacts", help="manage artifacts")
     artifact_subparsers = artifacts.add_subparsers(
@@ -123,6 +132,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_stage(store, engine, args.stage)
         if args.command == "gate":
             return _cmd_gate(store, engine, args.gate)
+        if args.command == "agent":
+            return _cmd_agent(store, args)
         if args.command == "artifacts":
             return _cmd_artifacts(store, args)
         if args.command == "change":
@@ -206,6 +217,66 @@ def _cmd_gate(store: StateStore, engine: GateEngine, gate: str) -> int:
     for message in result.messages:
         print(f"  - {message}")
     return 0 if result.passed else 1
+
+
+def _cmd_agent(store: StateStore, args: argparse.Namespace) -> int:
+    if args.agent_command == "run":
+        result, _event_id, _issue_file = _invoke_agent_role(
+            store,
+            role=args.role,
+            prompt=args.prompt,
+            context_paths=list(args.context),
+        )
+        print(result.final_message, end="" if result.final_message.endswith("\n") else "\n")
+        return 0 if result.ok else 1
+    return 2
+
+
+def _invoke_agent_role(
+    store: StateStore,
+    role: str,
+    prompt: str,
+    context_paths: list[str],
+) -> tuple[AgentResult, str, str | None]:
+    manifest = store.load_current_manifest()
+    event_id = f"agent-{len(store.read_activity()) + 1:05d}"
+    invocation = AgentInvocation(
+        role=role,
+        prompt=prompt,
+        context_paths=context_paths,
+    )
+    try:
+        runtime = runtime_for_role(role, store.root)
+        result = runtime.invoke(invocation)
+    except Exception as error:
+        result = _failed_agent_result(str(error))
+    store.write_message(f"{event_id}-prompt", invocation.prompt)
+    store.write_message(f"{event_id}-response", result.final_message)
+    store.write_raw_event(event_id, result.raw_events)
+    issue_file = _agent_issue_file(role, store)
+    linked_issue_ids: list[str] = []
+    if issue_file:
+        linked_issue_ids = _store_agent_issues(
+            store,
+            issue_file,
+            role,
+            result.issues,
+        )
+    store.append_activity(
+        ActivityEvent(
+            actor=role,
+            stage=manifest.active_stage,
+            action="agent-invoked",
+            summary=f"Invoked agent role {role}.",
+            status="pass" if result.ok else "blocked",
+            linked_issue_ids=linked_issue_ids,
+            inputs=list(invocation.context_paths),
+            outputs=[issue_file] if issue_file and linked_issue_ids else [],
+            commands=list(result.commands),
+            message_ref=f"messages/{event_id}-response.md",
+        )
+    )
+    return result, event_id, issue_file
 
 
 def _cmd_artifacts(store: StateStore, args: argparse.Namespace) -> int:
