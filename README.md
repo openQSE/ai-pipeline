@@ -16,6 +16,95 @@ the creative requirements and design work interactive, then enforces the
 engineering discipline around when implementation can start and how review
 loops are recorded.
 
+## Workflow
+
+Create a pipeline project and enter its project environment:
+
+```bash
+./ai-pipeline new path/to/project
+source path/to/project/bin/activate
+ai-pipeline status
+```
+
+`new` initializes the target directory as a GitHub-ready git repository,
+creates the standard pipeline artifacts, creates `.agent-pipeline/`, and
+installs `path/to/project/bin/activate`. After activation, `ai-pipeline`
+commands run inside that project context.
+
+Define and approve requirements with ElectroBoy:
+
+```bash
+ai-pipeline requirements
+ai-pipeline requirements-approve
+```
+
+Create, review, and approve the design:
+
+```bash
+ai-pipeline design
+ai-pipeline design-review
+ai-pipeline design-approve
+```
+
+Create and approve the implementation plan:
+
+```bash
+ai-pipeline implementation-plan
+ai-pipeline plan-approve
+```
+
+Run the automated implementation pipeline, finesse documentation, and record
+final approval:
+
+```bash
+ai-pipeline code
+ai-pipeline document
+ai-pipeline code-approve
+```
+
+`code` implements each phase, runs code review, runs test review, commits each
+verified phase, and runs validation testing. `document` runs the documentation
+refinement and review phase. It gives the Documentation Agent the final
+codebase, requirements, design, implementation plan, validation report, and
+review history. If a review or validation issue needs human input, the command
+records the escalation and stops at a resumable checkpoint.
+
+Resume an interrupted run from the same project:
+
+```bash
+source path/to/project/bin/activate
+ai-pipeline status
+ai-pipeline code
+```
+
+Move backward when later work exposes a missing requirement, design issue, or
+phase-plan problem:
+
+```bash
+ai-pipeline requirements --reason "New setup workflow discovered"
+ai-pipeline design --reason "Architecture needs queued run support"
+ai-pipeline implementation-plan --reason "Phase split needs to change"
+ai-pipeline document --reason "Improve API examples"
+```
+
+The pipeline allows controlled backward movement and blocks forward skips. An
+earlier stage command records a change-control event and invalidates affected
+downstream gates. A later stage command fails until its predecessor gates pass.
+
+Leave the project environment:
+
+```bash
+ai-pipeline deactivate
+```
+
+The activation script can also enter a configured Python environment. The
+pipeline uses `ai-pipeline deactivate` instead of bare `deactivate` so it does
+not conflict with Python virtual environment behavior.
+
+The repository entrypoint can be run as either `./ai-pipeline` or
+`./electroboy`. Installed command environments expose the same CLI as
+`ai-pipeline` and `electroboy`.
+
 ## Why This Exists
 
 AI coding agents are useful, but they can drift when the project lacks a clear
@@ -37,9 +126,11 @@ It helps by:
 
 ## Current Status
 
-The current implementation is a local runnable orchestrator prototype.
+The repository contains a local runnable orchestrator prototype. The workflow
+above is the target operator surface. `docs/implementation-plan.md` tracks the
+remaining implementation work needed to align the prototype with that surface.
 
-Implemented:
+Prototype capabilities:
 
 - Python package and CLI entry point.
 - JSON-backed run state under `.agent-pipeline/`.
@@ -59,6 +150,16 @@ Implemented:
 - Unit tests for pipeline state, gates, runtime adapters, phase flow,
   validation, documentation review, change control, and reporting.
 
+Planned workflow alignment:
+
+- `ai-pipeline new <path>` project creation.
+- `source <project>/bin/activate` project activation.
+- `ai-pipeline deactivate` shell-safe deactivation.
+- Primary stage commands for requirements, design, implementation planning,
+  code, documentation, and final approval.
+- Shared and local `.agent-pipeline/` state separation.
+- Rich progress indicators during automatic implementation.
+
 Extension points:
 
 - The Codex exec and generic CLI adapters can invoke configured agent CLIs.
@@ -68,13 +169,16 @@ Extension points:
 
 ## Install For Development
 
-The project currently has no third-party runtime dependencies. Python 3.10 or
-newer is required.
+Python 3.10 or newer is required. The prototype has no third-party runtime
+dependencies. The target workflow adds Rich for automatic pipeline progress
+output.
 
 Run directly from a checkout:
 
 ```bash
-PYTHONPATH=src python -m ai_pipeline --help
+./ai-pipeline --help
+./electroboy --help
+./ai-pipeline new /tmp/example-pipeline-project
 ```
 
 Or install in editable mode:
@@ -82,122 +186,82 @@ Or install in editable mode:
 ```bash
 python -m pip install -e .
 ai-pipeline --help
+electroboy --help
 ```
 
 ## Basic Usage
 
-Initialize a pipeline run:
+Create or enter a project:
 
 ```bash
-PYTHONPATH=src python -m ai_pipeline init
+./ai-pipeline new path/to/project
+source path/to/project/bin/activate
 ```
 
-Show the current run state:
+Show the current stage, blocked gate, and next command:
 
 ```bash
-PYTHONPATH=src python -m ai_pipeline status
+ai-pipeline status
 ```
 
-The initial active stage is `requirements`. The pipeline will reject later
-stage commands until the required predecessor gates pass.
-
-Create `docs/requirements.md`, then complete the requirements stage:
+Interactive authoring commands:
 
 ```bash
-mkdir -p docs
-printf '# Requirements\n' > docs/requirements.md
-PYTHONPATH=src python -m ai_pipeline stage requirements \
-  --human-approved \
-  --author-confirmed
+ai-pipeline requirements
+ai-pipeline design
+ai-pipeline implementation-plan
 ```
 
-The active stage becomes `design`.
-
-Create `docs/detailed-design.md`, then move through design and design review:
+Approval commands:
 
 ```bash
-printf '# Detailed Design\n' > docs/detailed-design.md
-PYTHONPATH=src python -m ai_pipeline stage design \
-  --human-approved
-PYTHONPATH=src python -m ai_pipeline stage design-review
-PYTHONPATH=src python -m ai_pipeline stage design-acceptance \
-  --human-approved
+ai-pipeline requirements-approve
+ai-pipeline design-approve
+ai-pipeline plan-approve
+ai-pipeline code-approve
 ```
 
-Create `docs/implementation-plan.md`, then approve the plan stage:
+Automated commands:
 
 ```bash
-printf '# Implementation Plan\n' > docs/implementation-plan.md
-PYTHONPATH=src python -m ai_pipeline stage plan \
-  --human-approved \
-  --author-confirmed
+ai-pipeline design-review
+ai-pipeline code
+ai-pipeline document
 ```
 
-Each implementation-plan phase must include a `Requirements:` line that
-references requirement ids from `docs/requirements.md`, such as `REQ-1`.
+`requirements`, `design`, and `implementation-plan` start the configured
+Design Author Agent with the right artifact context. The session can end and
+be restarted. The next invocation rebuilds context from repository artifacts,
+shared pipeline state, decisions, review issues, and activity events.
 
-At this point the run advances to the `implementation` stage. Start one phase,
-record code review and test review, then record the verified git commit SHA:
-
-```bash
-PYTHONPATH=src python -m ai_pipeline phase start 1
-PYTHONPATH=src python -m ai_pipeline phase review 1 --pass
-PYTHONPATH=src python -m ai_pipeline phase test 1 --pass
-PYTHONPATH=src python -m ai_pipeline phase commit 1 --sha <commit-sha>
-```
-
-The phase commit command verifies that the SHA exists in the repository. A
-second phase cannot start while another phase is active.
-
-After all planned phases are committed, complete implementation and run
-validation:
-
-```bash
-PYTHONPATH=src python -m ai_pipeline stage implementation
-PYTHONPATH=src python -m ai_pipeline validate
-```
-
-Validation commands run as argument vectors. Use `--shell-command` only when
-shell behavior is required:
-
-```bash
-PYTHONPATH=src python -m ai_pipeline validate \
-  --command python -m unittest discover -s tests
-PYTHONPATH=src python -m ai_pipeline validate \
-  --shell-command "python -m unittest discover -s tests"
-```
-
-Complete final documentation review after validation passes:
-
-```bash
-PYTHONPATH=src python -m ai_pipeline docs-review
-```
+`code` resumes from the last durable checkpoint. It implements one phase at a
+time, runs code review and test review, commits verified phases, runs final
+validation testing, and stops before the documentation finesse pass.
+`document` completes documentation review before `code-approve` can pass.
 
 ## Flow Enforcement
 
 The CLI records one active stage in
-`.agent-pipeline/runs/<run-id>/manifest.json`. Mutating commands must match
-that active stage and pass predecessor gates.
+`.agent-pipeline/shared/runs/<run-id>/manifest.json`. Mutating commands must
+match that active stage, move backward through change control, or pass
+predecessor gates.
 
-For example, this fails immediately after `init`:
+For example, this fails immediately after `new`:
 
 ```bash
-PYTHONPATH=src python -m ai_pipeline stage plan
+ai-pipeline code
 ```
 
 The command is blocked because the run is still at `requirements`. This is the
 core software engineering rule enforced by the orchestrator: no implementation
-planning before requirements and design are approved.
+before requirements, design, and implementation planning are approved.
 
 Useful inspection commands:
 
 ```bash
-PYTHONPATH=src python -m ai_pipeline status
-PYTHONPATH=src python -m ai_pipeline resume
-PYTHONPATH=src python -m ai_pipeline report summary
-PYTHONPATH=src python -m ai_pipeline report trace
-PYTHONPATH=src python -m ai_pipeline gate requirements
-PYTHONPATH=src python -m ai_pipeline gate implementation
+ai-pipeline status
+ai-pipeline report summary
+ai-pipeline report trace
 ```
 
 ## Change Control
@@ -206,31 +270,17 @@ Later pipeline stages may reveal a missing requirement, design drift, or an
 implementation-plan gap. Those cases must reopen the earliest affected
 baseline instead of jumping directly into an arbitrary stage.
 
-Open a change-control request:
+Run the earliest affected stage command with a reason:
 
 ```bash
-PYTHONPATH=src python -m ai_pipeline change open \
-  --baseline requirements \
-  --reason "Validation found an undocumented setup workflow."
+ai-pipeline requirements --reason "Validation found a missing setup workflow"
+ai-pipeline design --reason "The architecture needs queued run support"
+ai-pipeline implementation-plan --reason "The phase split is wrong"
+ai-pipeline document --reason "Improve API examples"
 ```
 
-Show open requests:
-
-```bash
-PYTHONPATH=src python -m ai_pipeline change status
-```
-
-Classify the earliest affected baseline, record human approval, then reopen:
-
-```bash
-PYTHONPATH=src python -m ai_pipeline change classify CR-0001 \
-  --baseline requirements
-PYTHONPATH=src python -m ai_pipeline change approve CR-0001 --human-approved
-PYTHONPATH=src python -m ai_pipeline change reopen CR-0001
-```
-
-Reopening invalidates downstream gates and matching artifact snapshots. The
-pipeline resumes from the reopened baseline stage.
+The orchestrator records a change-control event, asks for approval when
+downstream gates would be invalidated, and resumes from the reopened stage.
 
 ## Agent Runtime Configuration
 
@@ -265,53 +315,74 @@ args = ["--print"]
 structured_output = "prompt_contract"
 
 [roles]
+design_author = "codex"
 design_review = "codex"
 coding = "codex"
 code_review = "claude"
 test_review = "codex"
 documentation = "codex"
+
+[environment]
+activate_python = true
+python_activate = ".venv/bin/activate"
+python_managed_by_pipeline = false
 ```
 
 Codex review roles run with `--sandbox read-only` by default. Coding and
 documentation-writing roles run with `--sandbox workspace-write` unless the
 runtime configuration supplies an explicit sandbox option.
 
+If `activate_python` is true, `source path/to/project/bin/activate` also
+enters the configured Python environment. `ai-pipeline deactivate` restores the
+pipeline context and only deactivates the Python environment when the pipeline
+owns that activation.
+
 ## State Files
 
 Pipeline state is stored under `.agent-pipeline/`.
 
-Important files:
+Shared files are committed to git:
 
-- `current-run` stores the active run id.
-- `runs/<run-id>/manifest.json` stores active stage and completed gates.
-- `runs/<run-id>/activity-log.jsonl` stores run events.
-- `runs/<run-id>/change-requests.jsonl` stores change-control requests.
-- `runs/<run-id>/approvals.jsonl` stores human and agent approvals.
-- `runs/<run-id>/baseline-invalidations.jsonl` stores invalidated gates and
-  snapshots.
-- `runs/<run-id>/*-review.jsonl` stores append-only issue lifecycle records.
-- `runs/<run-id>/artifact-snapshots.jsonl` stores approved artifact snapshots.
+- `.agent-pipeline/project.toml` stores project configuration.
+- `.agent-pipeline/shared/current-run` stores the active run id.
+- `.agent-pipeline/shared/runs/<run-id>/manifest.json` stores active stage and
+  completed gates.
+- `.agent-pipeline/shared/runs/<run-id>/activity-log.jsonl` stores run events.
+- `.agent-pipeline/shared/runs/<run-id>/change-requests.jsonl` stores
+  change-control requests.
+- `.agent-pipeline/shared/runs/<run-id>/approvals.jsonl` stores human and
+  agent approvals.
+- `.agent-pipeline/shared/runs/<run-id>/*-review.jsonl` stores append-only
+  issue lifecycle records.
+- `.agent-pipeline/shared/runs/<run-id>/artifact-snapshots.jsonl` stores
+  approved artifact snapshots.
 
-The `.agent-pipeline/` directory is ignored by git because it contains local
-run history.
+Local files are ignored by git:
+
+- `.agent-pipeline/local/activation.json` stores shell activation state.
+- `.agent-pipeline/local/sessions/` stores provider session references.
+- `.agent-pipeline/local/raw/` stores redacted raw runtime streams.
+- `.agent-pipeline/local/logs/` stores local diagnostic logs.
+
+Secrets are never written to shared or local state.
 
 ## Development
 
 Run tests:
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests
+python -m unittest discover -s tests
 ```
 
 Run the CLI smoke check:
 
 ```bash
-PYTHONPATH=src python -m ai_pipeline --help
+ai-pipeline --help
 ```
 
 Run a full smoke check:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
+ai-pipeline --help
 ```

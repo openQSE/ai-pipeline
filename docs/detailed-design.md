@@ -5,6 +5,7 @@
 - [Purpose](#purpose)
 - [Design Approach](#design-approach)
 - [Workflow Overview](#workflow-overview)
+- [Project Environment](#project-environment)
 - [Goals](#goals)
 - [Non-Goals](#non-goals)
 - [Core Artifacts](#core-artifacts)
@@ -85,6 +86,12 @@ sequenceDiagram
     participant DOC as Documentation Agent
     participant G as Git Repository
     participant S as Agent State
+
+    H->>O: ai-pipeline new <project>
+    O->>G: Initialize project repository
+    O->>S: Create project environment and pipeline state
+    H->>O: source <project>/bin/activate
+    O-->>H: Show active stage and next command
 
     H->>DA: Explore requirements with ElectroBoy
     DA-->>H: Draft docs/requirements.md
@@ -174,17 +181,21 @@ sequenceDiagram
 
     O->>S: Snapshot validation report
 
+    H->>O: ai-pipeline document
     O->>DOC: Review final documentation
     DOC-->>O: Return documentation issues
     O->>S: Store documentation review comments
     O->>C: Request code clarification when needed
     O->>DOC: Verify documentation fixes
     O->>S: Store final docs snapshots and event
+    O->>H: Present final implementation report
+    H->>O: ai-pipeline code-approve
+    O->>S: Record final human completion approval
     O-->>H: Report completed pipeline
 
     opt Later requirement or design iteration
-        H->>O: Open change request
-        O->>S: Record request and affected baseline
+        H->>O: Run earlier stage command with reason
+        O->>S: Record change request and affected baseline
         O->>DA: Reopen requirements or design stage
         DA-->>O: Update affected artifact
         O->>S: Invalidate affected downstream gates
@@ -230,7 +241,9 @@ stateDiagram-v2
     DocumentationReview: Verify docs against requirements and code
     DocumentationReview --> PhaseImplementation: implementation conflict
     DocumentationReview --> ChangeControl: requirements or design drift
-    DocumentationReview --> Complete: documentation verified
+    DocumentationReview --> HumanCompletionApproval: documentation verified
+    HumanCompletionApproval: Human records ai-pipeline code-approve
+    HumanCompletionApproval --> Complete: final completion approved
     Complete --> ChangeControl: new iteration requested
 
     ChangeControl: Classify earliest affected baseline
@@ -239,6 +252,52 @@ stateDiagram-v2
     ChangeControl --> ImplementationPlanning: plan-only update
     Complete --> [*]
 ```
+
+## Project Environment
+
+Each project has an activatable pipeline environment. The environment is
+created with `ai-pipeline new <path>`, which initializes the project directory,
+initializes a GitHub-ready git repository when one is not already present,
+writes the standard pipeline files, and creates `<path>/bin/activate`.
+
+The activation script behaves like a Python virtual environment activation
+script from the operator's perspective:
+
+```bash
+source path/to/project/bin/activate
+```
+
+After activation, commands run in that project context:
+
+```bash
+ai-pipeline status
+ai-pipeline requirements
+ai-pipeline code
+ai-pipeline document
+```
+
+The activation script sets the active project path, run id, state directory,
+and prompt context used by the orchestrator. If the project configuration names
+a Python environment, activation also enters that Python environment. This
+lets a project use its normal runtime environment without making the pipeline
+environment and Python environment the same artifact.
+
+The pipeline does not claim the bare `deactivate` command. Activated shells use
+`ai-pipeline deactivate` so the pipeline can restore only the variables and
+wrappers that it installed. When activation also entered a Python environment,
+the pipeline deactivates that Python environment only when it created or owns
+that activation. A Python environment that was active before project activation
+is preserved.
+
+`electroboy` is an alias for `ai-pipeline`. Repository checkouts provide
+`./ai-pipeline` and `./electroboy`, and installed environments expose both
+`ai-pipeline` and `electroboy` as equivalent commands.
+
+Activation is resumable. If the shell closes during implementation, the
+operator can activate the same project again, run `ai-pipeline status`, and
+continue with the active stage command. The orchestrator reads durable state
+from the project environment rather than relying on shell history or hidden
+agent session ids.
 
 ## Goals
 
@@ -314,42 +373,59 @@ points, and stable behavior guarantees.
 
 ### Agent State Directory
 
-The pipeline stores machine-readable state under `.agent-pipeline/`.
+The pipeline stores machine-readable state under `.agent-pipeline/`. The
+directory has a shared portion that is committed to git and a local portion
+that is ignored. Shared records let collaborators review the same pipeline
+history. Local records keep machine-specific and credential-adjacent data out
+of the repository.
 
 Directory layout:
 
 ```text
 .agent-pipeline/
-  runs/
-    <run-id>/
-      manifest.json
-      approvals.jsonl
-      activity-log.jsonl
-      change-requests.jsonl
-      baseline-invalidations.jsonl
-      artifact-snapshots.jsonl
-      design-review.jsonl
-      phase-<n>-code-review.jsonl
-      phase-<n>-test-review.jsonl
-      validation-review.jsonl
-      documentation-review.jsonl
-      artifacts/
-        requirements.md
-        detailed-design.md
-        implementation-plan.md
-        validation-report.md
-        README.md
-        api.md
-      messages/
-        <event-id>.md
-  phase-status.json
-  decisions.jsonl
+  project.toml
+  shared/
+    current-run
+    decisions.jsonl
+    phase-status.json
+    runs/
+      <run-id>/
+        manifest.json
+        approvals.jsonl
+        activity-log.jsonl
+        change-requests.jsonl
+        baseline-invalidations.jsonl
+        artifact-snapshots.jsonl
+        design-review.jsonl
+        phase-<n>-code-review.jsonl
+        phase-<n>-test-review.jsonl
+        validation-review.jsonl
+        documentation-review.jsonl
+        artifacts/
+          requirements.md
+          detailed-design.md
+          implementation-plan.md
+          validation-report.md
+          README.md
+          api.md
+        messages/
+          <event-id>.md
+  local/
+    activation.json
+    sessions/
+    raw/
+    logs/
 ```
 
-The files in this directory capture review issues, change requests, decisions,
-phase status, and run metadata. They are not a substitute for the source
-documents. They give the orchestrator and agents a reliable way to resume work
-and audit past decisions.
+The shared files capture review issues, change requests, approvals, decisions,
+phase status, artifact snapshots, and run metadata. They are not a substitute
+for the source documents. They give the orchestrator, agents, and other
+collaborators a reliable way to resume work and audit past decisions.
+
+The local files capture provider session ids, raw runtime streams, local logs,
+temporary checkpoints, shell activation state, and machine-specific paths.
+They are ignored by git. Provider credentials and API keys are never written to
+either shared or local state.
 
 `activity-log.jsonl` is the append-only timeline for the run. It records every
 agent step, review pass, response, verification, test command, gate decision,
@@ -374,6 +450,11 @@ gates and approvals.
 Change control records baseline invalidations that link reopened baselines to
 the downstream gates and artifact snapshot refs that no longer authorize later
 stages.
+
+Project configuration in `.agent-pipeline/project.toml` records the shared
+state policy, default agent runtimes, stage commands, and optional Python
+environment integration. The file is committed so collaborators activate the
+same pipeline behavior.
 
 ## Pipeline Stages
 
@@ -556,6 +637,12 @@ Exit criteria:
 ### Stage 8. Final Documentation Review
 
 The documentation agent reviews the completed codebase and documentation.
+The user-facing command is `ai-pipeline document`. This command starts or
+resumes the documentation finesse pass after validation testing has passed.
+After the documentation gate passes, the human operator records final
+completion with `ai-pipeline code-approve`. This approval marks the automated
+implementation run complete and confirms that the operator accepts the final
+requirements, design, code, validation, and documentation state.
 
 The documentation pass verifies four levels of documentation:
 
@@ -571,6 +658,8 @@ Exit criteria:
 - Public API documentation matches the code.
 - The README is complete enough for a new contributor to follow successfully.
 - Design documentation reflects the final implementation.
+- The `ai-pipeline document` command has completed the documentation gate.
+- The human operator records final completion with `ai-pipeline code-approve`.
 
 ## Flow Control
 
@@ -586,13 +675,28 @@ planning before code. An operator cannot start code review, testing,
 validation, or documentation review for a run that has not passed the earlier
 requirements and design gates.
 
+User-facing stage commands follow stable transition rules:
+
+- Running the active stage command resumes that stage.
+- Running an earlier stage command opens a change-control iteration and
+  invalidates dependent downstream gates after the operator records a reason.
+- Running a later stage command is rejected until every predecessor gate has
+  passed.
+- Running `ai-pipeline code` after interruption resumes the active phase or the
+  next uncommitted phase from durable state.
+- Running `ai-pipeline document` resumes the documentation stage after
+  validation testing passes.
+- Running a stage command after pipeline completion starts a new controlled
+  iteration from that stage.
+
 Allowed operator actions:
 
 - Start a new run at requirements definition.
 - Resume the active stage recorded in the run manifest.
 - Inspect status, history, gates, issues, decisions, and artifacts.
 - Approve a gate when the gate's documented criteria are satisfied.
-- Open a change-control request that reopens an earlier baseline.
+- Reopen an earlier baseline by running the earlier stage command with a
+  recorded reason.
 
 Blocked operator actions:
 
@@ -780,6 +884,9 @@ order and preserve state.
 
 Responsibilities:
 
+- Create project environments with `ai-pipeline new <path>`.
+- Provide activation metadata used by `<project>/bin/activate`.
+- Restore pipeline activation state through `ai-pipeline deactivate`.
 - Assign the active stage and active implementation phase.
 - Reject commands that do not match the active stage or allowed transition.
 - Provide each agent with the correct context bundle.
@@ -799,6 +906,7 @@ Responsibilities:
 - Prevent a phase commit before code review and test review are complete.
 - Prevent final documentation review before validation testing passes.
 - Route later requirements or design discoveries through change control.
+- Convert earlier-stage commands into controlled change-control iterations.
 - Halt and request human input when agents disagree about design intent or
   scope.
 - Record decisions that affect future phases.
@@ -1112,6 +1220,21 @@ Coding Agent can open a change-control request when later work exposes a
 missing requirement, incorrect requirement, design drift, implementation-plan
 gap, or completed-pipeline enhancement.
 
+For operator-driven iteration, the user-facing path is to run the earliest
+affected stage command with a reason:
+
+```bash
+ai-pipeline requirements --reason "New installation workflow discovered"
+ai-pipeline design --reason "Architecture needs to account for queued runs"
+ai-pipeline implementation-plan --reason "Phase split needs to change"
+ai-pipeline code --reason "Need another implementation pass"
+ai-pipeline document --reason "Improve API examples"
+```
+
+The orchestrator turns that command into a change-control request, records the
+reason, classifies the affected baseline, and asks for human approval when the
+reopened stage would invalidate downstream gates.
+
 The orchestrator records each request in the activity log and links it to a
 decision record. The request identifies the earliest affected baseline:
 
@@ -1129,9 +1252,10 @@ in the run history for audit, but they no longer authorize later stages. The
 pipeline resumes from the reopened stage and advances through the normal gate
 sequence again.
 
-Reopen requires a classified change-control request and a human approval event.
-Open requests keep the run blocked until they are classified, approved, or
-closed by a recorded decision.
+Reopening requires a classified change-control request and a human approval
+event. Stage commands create those records on behalf of the operator when the
+operator moves backward. Open requests keep the run blocked until they are
+classified, approved, or closed by a recorded decision.
 
 Completed runs can also iterate through the same mechanism. A new requirement
 or design change after completion creates a change-control request, reopens the
@@ -1284,13 +1408,17 @@ The final documentation pass reads the repository from a user's perspective.
 
 ## Operational Model
 
-The baseline deployment model is a local CLI-driven workflow. The orchestrator
-invokes agents through role-specific prompts, stores issue records, and requires
-explicit gate checks before moving to the next stage.
+The baseline deployment model is a local CLI-driven workflow with a per-project
+activation environment. The orchestrator invokes agents through role-specific
+prompts, stores issue records, and requires explicit gate checks before moving
+to the next stage.
 
 The CLI enforces the same ordered state machine as the design. Operator
 commands can inspect state at any time, but mutating commands are accepted only
 when they match the active stage or an allowed change-control transition.
+The activation environment makes the project context implicit after
+`source <project>/bin/activate`, while durable state keeps resume behavior
+independent of a particular shell session.
 
 The architecture includes extension points for a service layer, dashboard,
 queue, and GitHub integration. Those extensions preserve the same core model.
@@ -1301,24 +1429,33 @@ explicit.
 
 1. Define the requirements, design, implementation-plan, and review issue
    templates.
-2. Implement a minimal orchestrator that runs the requirements and design
+2. Implement `ai-pipeline new <path>` and project activation scripts.
+3. Implement a minimal orchestrator that runs the requirements and design
    loops.
-3. Add ordered stage transition enforcement.
-4. Add human design acceptance and implementation-plan approval gates.
-5. Add approved artifact snapshots under each run directory.
-6. Add change-control reopening and downstream gate invalidation.
-7. Add implementation phase tracking and phase gate checks.
-8. Add code review and test review loops for one phase at a time.
-9. Add validation testing against requirements and design.
-10. Add commit automation after gates pass.
-11. Add the final documentation review pass.
-12. Add resume support from `.agent-pipeline/` state.
+4. Add ordered stage transition enforcement.
+5. Add human design acceptance and implementation-plan approval gates.
+6. Add shared and local `.agent-pipeline/` state handling.
+7. Add approved artifact snapshots under each run directory.
+8. Add change-control reopening and downstream gate invalidation.
+9. Add implementation phase tracking and phase gate checks.
+10. Add code review and test review loops for one phase at a time.
+11. Add validation testing against requirements and design.
+12. Add commit automation after gates pass.
+13. Add the final documentation review pass, `document`, and `code-approve`.
+14. Add resume support from `.agent-pipeline/` state.
 
 ## Design Decisions
 
 - The baseline orchestrator is a local CLI workflow.
+- Projects are entered through `source <project>/bin/activate`.
+- The pipeline provides `ai-pipeline deactivate` instead of claiming the shell's
+  bare `deactivate` command.
+- `electroboy` is an alias for `ai-pipeline`.
+- Project activation can also activate a configured Python environment.
 - The orchestrator enforces an ordered state machine for all mutating stage
   commands.
+- Same-stage commands resume, earlier-stage commands reopen through change
+  control, and later-stage commands are blocked until predecessor gates pass.
 - Agent runtimes are isolated behind role adapters.
 - `docs/requirements.md` is the source of truth for required system behavior.
 - Design, implementation planning, code review, test review, and final
@@ -1333,17 +1470,19 @@ explicit.
   repository state and run records.
 - The Design Author Agent keeps richer conversational continuity during
   human-led design and implementation planning.
-- Review issues are stored as JSONL under `.agent-pipeline/runs/<run-id>/`.
+- Review issues are stored as shared JSONL records under `.agent-pipeline/`.
 - Agent actions are stored in append-only activity logs under each run
   directory.
 - Full agent-facing messages are stored under
-  `.agent-pipeline/runs/<run-id>/messages/`.
+  `.agent-pipeline/shared/runs/<run-id>/messages/`.
 - Approved pipeline artifacts are stored as snapshots under
-  `.agent-pipeline/runs/<run-id>/artifacts/`.
+  `.agent-pipeline/shared/runs/<run-id>/artifacts/`.
+- Shared pipeline state is committed; local session, raw runtime, credential,
+  and shell activation state is ignored.
 - Change-control requests reopen the earliest affected baseline and invalidate
   downstream gates that depended on the old baseline.
-- Phase status is stored in `.agent-pipeline/phase-status.json`.
-- Cross-stage decisions are stored in `.agent-pipeline/decisions.jsonl`.
+- Phase status is stored in `.agent-pipeline/shared/phase-status.json`.
+- Cross-stage decisions are stored in `.agent-pipeline/shared/decisions.jsonl`.
 - Phase commits are created on the active working branch after gates pass.
 - Human approval is required for requirements acceptance, reviewed design
   acceptance, implementation plan acceptance, escalated decisions, and final

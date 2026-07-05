@@ -14,6 +14,7 @@
 - [Non-Goals](#non-goals)
 - [Repository Layout](#repository-layout)
 - [State And Artifact Storage](#state-and-artifact-storage)
+- [Project Environment Activation](#project-environment-activation)
 - [Data Models](#data-models)
 - [CLI Shape](#cli-shape)
 - [Flow Enforcement](#flow-enforcement)
@@ -74,6 +75,11 @@ belongs in a configured agent runtime.
 The selected implementation uses Python for orchestration and an adapter-backed
 agent CLI for execution.
 
+The CLI is exposed through two equivalent command names. `ai-pipeline` is the
+neutral tool name, and `electroboy` is the operator-friendly alias. Repository
+checkouts provide `./ai-pipeline` and `./electroboy`; installed environments
+provide `ai-pipeline` and `electroboy`.
+
 ## CLI Configuration And Credentials
 
 The orchestrator selects an agent runtime from configuration. Codex is the
@@ -107,11 +113,17 @@ args = ["<non-interactive-args>"]
 structured_output = "prompt_contract"
 
 [roles]
+design_author = "codex"
 design_review = "codex"
 coding = "codex"
 code_review = "claude"
 test_review = "codex"
 documentation = "codex"
+
+[environment]
+python_activate = ".venv/bin/activate"
+python_managed_by_pipeline = false
+activate_python = true
 ```
 
 A CLI runtime is compatible when it can:
@@ -262,45 +274,99 @@ adapters separate.
 
 ## State And Artifact Storage
 
-The orchestrator stores run state under `.agent-pipeline/`.
+The orchestrator stores run state under `.agent-pipeline/`. The directory is
+split into committed shared state and ignored local state.
 
 ```text
 .agent-pipeline/
-  runs/
-    <run-id>/
-      manifest.json
-      activity-log.jsonl
-      change-requests.jsonl
-      design-review.jsonl
-      phase-<n>-code-review.jsonl
-      phase-<n>-test-review.jsonl
-      validation-review.jsonl
-      documentation-review.jsonl
-      artifacts/
-        requirements.md
-        detailed-design.md
-        implementation-plan.md
-        validation-report.md
-        README.md
-        api.md
-      messages/
-        <event-id>.md
-      raw/
-        <event-id>.jsonl
-  phase-status.json
-  decisions.jsonl
+  project.toml
+  shared/
+    current-run
+    phase-status.json
+    decisions.jsonl
+    runs/
+      <run-id>/
+        manifest.json
+        approvals.jsonl
+        activity-log.jsonl
+        change-requests.jsonl
+        baseline-invalidations.jsonl
+        artifact-snapshots.jsonl
+        design-review.jsonl
+        phase-<n>-code-review.jsonl
+        phase-<n>-test-review.jsonl
+        validation-review.jsonl
+        documentation-review.jsonl
+        artifacts/
+          requirements.md
+          detailed-design.md
+          implementation-plan.md
+          validation-report.md
+          README.md
+          api.md
+        messages/
+          <event-id>.md
+  local/
+    activation.json
+    sessions/
+    raw/
+    logs/
 ```
 
 Working artifacts remain in their normal repository paths. Approved snapshots
 are copied into `artifacts/` at gate boundaries. Review comments and findings
 are written as JSONL issue records. Agent prompts and full textual responses
-are stored in `messages/`. Optional raw runtime streams are stored in `raw/`
-after redaction.
+are stored in `messages/`.
+
+Shared records are committed to git by default. They include approvals,
+review issues, change requests, baseline invalidations, artifact snapshots,
+decisions, phase status, and activity events. This lets multiple developers
+collaborate on the same requirements, design, plan, and review history.
+
+Local records are ignored by git. They include provider session ids, raw
+runtime streams, local logs, activation state, machine-specific paths, and
+temporary checkpoints. Optional raw runtime streams are stored under
+`local/raw/` after redaction. Credentials are never written to shared or local
+state.
 
 Change-control requests are stored in `change-requests.jsonl`. Each request
 records the reason for reopening earlier work, the earliest affected baseline,
 the downstream gates that were invalidated, and the stage where the pipeline
 resumes.
+
+## Project Environment Activation
+
+`ai-pipeline new <path>` creates the project environment. It creates the target
+directory when needed, initializes a GitHub-ready git repository when one is
+not already present, writes the standard artifact templates, creates
+`.agent-pipeline/`, and installs `<path>/bin/activate`.
+
+The activation script sets project-specific environment variables and wraps the
+`ai-pipeline` command so the current shell has a project context. It also
+prints the active stage, blocked gate when applicable, and next useful command.
+
+The activation script can enter a configured Python environment:
+
+```toml
+[environment]
+activate_python = true
+python_activate = ".venv/bin/activate"
+python_managed_by_pipeline = false
+```
+
+When `python_managed_by_pipeline` is true, `ai-pipeline deactivate` deactivates
+that Python environment while restoring pipeline variables. When the Python
+environment was active before project activation, the pipeline leaves it in
+place. The activation script does not define or override bare `deactivate`.
+
+`ai-pipeline deactivate` is implemented as an activated-shell wrapper around
+the CLI. The wrapper can restore environment variables in the current shell,
+while the Python process records the deactivation event in local state.
+
+Activation is restart-safe. If the shell closes during a code run, the operator
+can run `source <project>/bin/activate` and then `ai-pipeline code`. The
+orchestrator resumes from shared run state, phase status, issue records,
+artifact snapshots, and any safe local checkpoint data.
 
 ## Data Models
 
@@ -330,39 +396,65 @@ state files safely as the design evolves.
 
 ## CLI Shape
 
-The baseline CLI exposes commands that match the pipeline stages.
+The primary CLI exposes commands that match the operator workflow.
 
 ```text
-ai-pipeline init
+ai-pipeline new <path>
+source <path>/bin/activate
 ai-pipeline status
-ai-pipeline stage requirements --human-approved --author-confirmed
-ai-pipeline stage design --human-approved
-ai-pipeline stage design-review
-ai-pipeline stage design-acceptance --human-approved
-ai-pipeline stage plan --human-approved --author-confirmed
-ai-pipeline stage implementation
-ai-pipeline phase start <n>
-ai-pipeline phase review <n> --pass
-ai-pipeline phase test <n> --pass
-ai-pipeline phase commit <n> --sha <commit-sha>
-ai-pipeline validate [--command <argv>...]
-ai-pipeline docs-review
-ai-pipeline gate <name>
-ai-pipeline plan check
-ai-pipeline plan update
-ai-pipeline change open
-ai-pipeline change classify <id> [--baseline <baseline>]
-ai-pipeline change approve <id> --human-approved
-ai-pipeline change reopen <id>
-ai-pipeline change status
-ai-pipeline resume
+ai-pipeline requirements [--reason <text>]
+ai-pipeline requirements-approve
+ai-pipeline design [--reason <text>]
+ai-pipeline design-review
+ai-pipeline design-approve
+ai-pipeline implementation-plan [--reason <text>]
+ai-pipeline plan-approve
+ai-pipeline code [--reason <text>]
+ai-pipeline document [--reason <text>]
+ai-pipeline code-approve
+ai-pipeline deactivate
 ai-pipeline report summary
 ai-pipeline report trace
 ```
 
-The CLI is intentionally explicit. Each command performs one stage transition,
-agent invocation, or gate check. This makes failures easier to inspect and
-resume.
+`requirements`, `design`, and `implementation-plan` invoke the configured
+Design Author Agent in an interactive authoring context. The orchestrator
+passes the active artifact, predecessor baselines, open review issues,
+decisions, and current stage state. The command records a draft event when the
+session exits. Approval remains separate so the human operator can review the
+artifact before the pipeline advances.
+
+`design-review` starts the automated design review loop. `code` starts or
+resumes the automated implementation loop through validation testing. During
+`code`, the orchestrator uses Rich progress indicators for the active phase,
+code review, test review, validation testing, escalations, and resumable
+checkpoints.
+
+`document` starts or resumes the documentation finesse pass. It gives the
+Documentation Agent the final codebase, requirements, design, implementation
+plan, validation report, and review history. The command must pass before
+`code-approve` can record final completion.
+
+Earlier stage commands are the primary iteration mechanism. When the active run
+is beyond the requested stage, the command opens a change-control record,
+stores the supplied reason, invalidates downstream gates after approval, and
+re-enters the ordered pipeline at that stage. Later stage commands are blocked
+until all predecessor gates pass.
+
+The implementation can still expose lower-level commands for debugging,
+testing, and CI automation:
+
+```text
+ai-pipeline debug gate <name>
+ai-pipeline debug phase start <n>
+ai-pipeline debug phase review <n> --pass
+ai-pipeline debug phase test <n> --pass
+ai-pipeline debug phase commit <n> --sha <commit-sha>
+ai-pipeline debug validate [--command <argv>...]
+ai-pipeline debug change status
+```
+
+Those commands use the same gate engine and activity log as the primary CLI.
 
 ## Flow Enforcement
 
@@ -371,8 +463,17 @@ loads the run manifest, checks the active stage, evaluates predecessor gates,
 and refuses to run when the requested action would skip required requirements,
 design, planning, validation, or documentation work.
 
-Read-only commands can inspect any run state. Mutating commands are accepted
-only when they match the active stage or a valid change-control transition.
+Read-only commands can inspect any run state. Mutating stage commands follow
+the user-facing transition rules:
+
+- The active stage command resumes the active stage.
+- An earlier stage command starts a controlled iteration from that stage.
+- A later stage command is blocked until every predecessor gate passes.
+- A completed run can be re-entered from any earlier stage.
+- `code` resumes from the last durable checkpoint when implementation was
+  interrupted.
+- `document` resumes the documentation stage after validation testing passes.
+
 The orchestrator records every accepted transition in `activity-log.jsonl`.
 
 The gate engine owns these decisions:
@@ -383,12 +484,13 @@ The gate engine owns these decisions:
 - Phase implementation requires an approved implementation plan.
 - Validation testing requires all planned phases to be committed.
 - Final documentation review requires validation testing to pass.
-- Reopening an earlier baseline requires a change-control request.
+- Moving backward creates or resumes a change-control request.
 
-Change-control commands classify the earliest affected baseline and invalidate
-downstream gates that depended on the old baseline. Classification remains a
-blocking state until the human operator approves reopening. The pipeline then
-resumes from the reopened stage and advances through the normal gate sequence.
+When an earlier stage command is used, the orchestrator records the reason,
+classifies the earliest affected baseline, and invalidates downstream gates
+that depended on the old baseline. Classification remains a blocking state
+until the human operator approves reopening. The pipeline then resumes from the
+reopened stage and advances through the normal gate sequence.
 
 ## Implementation Plan Maintenance
 
@@ -438,20 +540,32 @@ or manually waived.
 
 Requirements: REQ-1, REQ-14
 
-Create the package skeleton, test harness, formatter configuration, and CLI
-entry point.
+Create the package skeleton, test harness, formatter configuration, CLI entry
+point, project-environment commands, and terminal presentation dependency.
 
 Scope:
 
 - Add `pyproject.toml`.
+- Add the `rich` dependency for stage indicators and progress output.
 - Add `src/ai_pipeline/`.
 - Add `tests/`.
 - Add basic CLI command parsing.
+- Add `ai-pipeline new <path>`.
+- Add GitHub-ready repository initialization for new projects.
+- Add `electroboy` as an alias for the same CLI entrypoint.
+- Add activation-script template generation.
+- Add `ai-pipeline deactivate` shell-wrapper contract.
 - Add README setup placeholders if needed.
 
 Acceptance criteria:
 
 - `python -m ai_pipeline --help` or the configured console script runs.
+- `ai-pipeline new <path>` creates a project directory and git repository.
+- New repositories include GitHub-oriented defaults for collaboration.
+- `./ai-pipeline --help` and `./electroboy --help` expose the same command set.
+- `<path>/bin/activate` sets project context for the active shell.
+- The activation script does not define bare `deactivate`.
+- `ai-pipeline deactivate` restores pipeline-owned shell state.
 - Unit tests run locally.
 - The package imports without side effects.
 
@@ -492,6 +606,8 @@ Scope:
 - Write `phase-status.json`.
 - Append `decisions.jsonl`.
 - Store message files and raw runtime streams.
+- Enforce shared state and local state separation.
+- Generate `.gitignore` entries for `.agent-pipeline/local/`.
 
 Acceptance criteria:
 
@@ -501,6 +617,8 @@ Acceptance criteria:
 - State can be loaded after process restart.
 - Secret values are redacted before state is written.
 - Change-control records can be loaded and linked to activity events.
+- Shared state can be committed to git without local session data.
+- Local state is ignored and can be rebuilt when safe.
 
 ### Phase 3. Gate Engine
 
@@ -514,6 +632,7 @@ Scope:
 - Stage order gate.
 - Change-control gate.
 - Implementation-plan currency gate.
+- Earlier-stage iteration gate.
 - Design gate.
 - Human design acceptance gate.
 - Implementation gate.
@@ -531,6 +650,8 @@ Acceptance criteria:
 - Gates verify approvals, current snapshots, and structured traceability.
 - Unit tests cover pass and fail cases.
 - Tests prove that later stages cannot start before predecessor gates pass.
+- Tests prove that active-stage commands resume the current stage.
+- Tests prove that earlier-stage commands create change-control iterations.
 - Tests prove that reopened baselines invalidate downstream gates.
 - Tests prove that phase-scope changes block review until the plan is updated.
 
@@ -601,6 +722,13 @@ Implement the human/ElectroBoy requirements and design stages.
 
 Scope:
 
+- Add `ai-pipeline requirements`.
+- Add `ai-pipeline requirements-approve`.
+- Add `ai-pipeline design`.
+- Add `ai-pipeline design-review`.
+- Add `ai-pipeline design-approve`.
+- Invoke the configured Design Author Agent for interactive authoring.
+- Rebuild authoring context from artifacts and shared run state.
 - Requirements definition stage.
 - Human-led design exploration stage.
 - Automated design review stage.
@@ -610,6 +738,7 @@ Scope:
 
 Acceptance criteria:
 
+- Requirements and design commands can resume without a provider session id.
 - Requirements approval is recorded before formal design review.
 - Required approvals are explicit state records, not inferred from files.
 - Design commands fail before the requirements gate passes.
@@ -625,6 +754,10 @@ Implement collaborative implementation-plan generation and approval.
 
 Scope:
 
+- Add `ai-pipeline implementation-plan`.
+- Add `ai-pipeline plan-approve`.
+- Invoke the configured Design Author Agent with the approved requirements and
+  reviewed design context.
 - Generate or update `docs/implementation-plan.md`.
 - Track human approval.
 - Track Design Author Agent confirmation.
@@ -634,6 +767,7 @@ Scope:
 
 Acceptance criteria:
 
+- Implementation-plan authoring can resume from artifacts and shared state.
 - Coding cannot start until the implementation gate passes.
 - Planning cannot start until human design acceptance passes.
 - Every phase references relevant requirements.
@@ -652,6 +786,7 @@ Implement one-phase-at-a-time coding, review, test review, and commit flow.
 
 Scope:
 
+- Add `ai-pipeline code`.
 - Start active phase.
 - Invoke coding agent.
 - Invoke code review agent.
@@ -661,9 +796,14 @@ Scope:
 - Detect active-phase drift from `docs/implementation-plan.md`.
 - Commit verified phase.
 - Update `phase-status.json`.
+- Persist checkpoints before and after each agent turn.
+- Render stage, phase, review, test, validation, and escalation progress with
+  Rich.
 
 Acceptance criteria:
 
+- `ai-pipeline code` resumes after interruption from the last durable
+  checkpoint.
 - Each phase is committed independently.
 - A new phase cannot start while another phase is active.
 - Phase review and test review can update only the active phase.
@@ -672,6 +812,8 @@ Acceptance criteria:
 - Phase-scope drift blocks review and commit until the plan is updated.
 - Test commands and outputs are stored in the activity log.
 - Phase changes are limited to the active phase scope.
+- Rich output clearly identifies the active stage, active phase, blocking
+  issue, next agent, and resume checkpoint.
 
 ### Phase 9. Validation Testing
 
@@ -707,6 +849,8 @@ Implement final documentation verification.
 
 Scope:
 
+- Add `ai-pipeline document`.
+- Add `ai-pipeline code-approve`.
 - Verify `docs/requirements.md`.
 - Verify `docs/detailed-design.md`.
 - Verify `README.md`.
@@ -717,6 +861,9 @@ Scope:
 Acceptance criteria:
 
 - Documentation gate passes only after validation passes.
+- `document` can be run repeatedly while the documentation gate is active.
+- `code-approve` passes only after documentation review passes.
+- Final human completion approval is recorded in `approvals.jsonl`.
 - Public API documentation matches code.
 - Generated missing-file issues are verified automatically after the file is
   restored.
@@ -732,7 +879,7 @@ implementation work.
 
 Scope:
 
-- Open change-control requests.
+- Open change-control requests from earlier-stage commands.
 - Classify the earliest affected baseline.
 - Record human approval for reopening earlier stages.
 - Invalidate downstream gates and artifact snapshots.
@@ -741,6 +888,9 @@ Scope:
 
 Acceptance criteria:
 
+- `requirements --reason`, `design --reason`, `implementation-plan --reason`,
+  `code --reason`, and `document --reason` can reopen completed or later-stage
+  work.
 - Completed runs can reopen requirements or design through change control.
 - Later-stage findings can reopen the earliest affected baseline.
 - Reopen requires classification and human approval.
@@ -757,6 +907,7 @@ Implement restart-safe resume behavior and human-readable reporting.
 
 Scope:
 
+- Print activation status and next command from `<project>/bin/activate`.
 - Resume from run manifest and phase status.
 - Report blocked gates.
 - Report open change-control requests.
@@ -767,6 +918,7 @@ Scope:
 Acceptance criteria:
 
 - The pipeline can resume after interruption.
+- Reactivating a project reports the active stage and next useful command.
 - Reports explain what happened and why the current state is blocked or ready.
 - Reports show invalidated gates and the active reopened stage.
 - Reports include decisions, phase commits, snapshots, and baseline
@@ -777,17 +929,21 @@ Acceptance criteria:
 
 The initial useful milestone is a local, single-repo prototype:
 
-1. Initialize state.
-2. Run manual requirements and design stages.
-3. Verify that implementation commands fail before requirements and design
+1. Create a project with `ai-pipeline new <path>`.
+2. Activate it with `source <path>/bin/activate`.
+3. Run interactive requirements and design stages through the configured
+   Design Author Agent.
+4. Verify that implementation commands fail before requirements and design
    gates pass.
-4. Run automated design review through the configured default runtime.
-5. Record issues and activity events.
-6. Approve design and implementation plan manually.
-7. Run one small implementation phase through the coding, review, and test
+5. Run automated design review through the configured default runtime.
+6. Record issues and activity events in shared state.
+7. Approve design and implementation plan manually.
+8. Run one small implementation phase through the coding, review, and test
    loop.
-8. Open a sample change-control request and verify downstream gate
-   invalidation.
+9. Interrupt `ai-pipeline code` and verify that it resumes after activation.
+10. Run `ai-pipeline document` after validation testing passes.
+11. Reopen requirements with `ai-pipeline requirements --reason <text>`.
+12. Verify downstream gate invalidation.
 
 This milestone proves the hard parts of the process without requiring a full
 dashboard, cloud execution, or direct provider API integration.
@@ -823,15 +979,21 @@ Baseline verification commands:
 ```bash
 python -m unittest discover -s tests
 python -m ai_pipeline --help
-python -m ai_pipeline status
-python -m ai_pipeline gate requirements
-python -m ai_pipeline gate implementation
-python -m ai_pipeline change status
+ai-pipeline new /tmp/example-pipeline-project
+source /tmp/example-pipeline-project/bin/activate
+ai-pipeline status
+ai-pipeline requirements
+ai-pipeline requirements-approve
+ai-pipeline design
+ai-pipeline code
+ai-pipeline document
+ai-pipeline deactivate
 ```
 
-The exact command names can change when the CLI implementation starts. The
-requirements remain stable: unit tests must pass, the CLI must load, state must
-round-trip, and gates must report clear pass or fail results.
+Provider-specific invocation details can change as adapters mature. The
+workflow requirements remain stable: unit tests must pass, the CLI must load,
+state must round-trip, stage gates must report clear pass or fail results, and
+blocked forward movement must produce actionable errors.
 
 ## Open Implementation Decisions
 
@@ -840,8 +1002,6 @@ round-trip, and gates must report clear pass or fail results.
 - Whether to use Pydantic or standard-library dataclasses for state models.
 - Whether `validation-report.md` is written by the Test Review Agent or by the
   orchestrator from validation events.
-- Whether run artifact snapshots are committed to git or kept as local run
-  output.
 - How detailed downstream invalidation reporting should be.
 - Which agent CLI runtimes are supported by the initial generic adapter.
 - Whether runtime selection is global, per stage, per role, or per invocation.
