@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from ai_pipeline.artifacts import ArtifactManager  # noqa: E402
 from ai_pipeline.cli import main  # noqa: E402
 from ai_pipeline.gates import GateEngine  # noqa: E402
 from ai_pipeline.models import (  # noqa: E402
@@ -88,6 +89,13 @@ class ChangeControlTests(unittest.TestCase):
                 manifest.complete_gate(gate)
             manifest.set_active_stage(STAGE_COMPLETE)
             store.save_manifest(manifest)
+            write_file(root / "docs" / "requirements.md", "# Requirements\n")
+            snapshot = ArtifactManager(root).snapshot(
+                manifest.run_id,
+                "docs/requirements.md",
+                "requirements-approved",
+            )
+            store.append_artifact_snapshot(snapshot)
             self.assertEqual(
                 self.run_cli(
                     [
@@ -99,6 +107,25 @@ class ChangeControlTests(unittest.TestCase):
                         "design",
                         "--reason",
                         "The design must be corrected.",
+                    ]
+                )[0],
+                0,
+            )
+            self.assertEqual(
+                self.run_cli(
+                    ["--root", str(root), "change", "classify", "CR-0001"]
+                )[0],
+                0,
+            )
+            self.assertEqual(
+                self.run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "change",
+                        "approve",
+                        "CR-0001",
+                        "--human-approved",
                     ]
                 )[0],
                 0,
@@ -119,6 +146,11 @@ class ChangeControlTests(unittest.TestCase):
             self.assertFalse(manifest.has_gate(GATE_IMPLEMENTATION))
             self.assertEqual(requests[0]["status"], "reopened")
             self.assertTrue(order.passed)
+
+
+def write_file(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":

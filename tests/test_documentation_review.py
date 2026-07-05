@@ -52,6 +52,23 @@ class DocumentationReviewTests(unittest.TestCase):
             self.assertEqual(issues[0]["severity"], "blocker")
             self.assertIn("docs/api.md", issues[0]["summary"])
 
+    def test_docs_review_reconciles_restored_missing_file_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.prepare_docs_review_run(root)
+            write_docs(root, include_api=False)
+            self.assertEqual(self.run_cli(["--root", str(root), "docs-review"])[0], 1)
+            write_docs(root, include_api=True)
+
+            code, stdout, stderr = self.run_cli(
+                ["--root", str(root), "docs-review"]
+            )
+            issues = store.read_review_issues("documentation-review.jsonl")
+
+            self.assertEqual(code, 0, stderr)
+            self.assertIn("documentation review: passed", stdout)
+            self.assertEqual(issues[0]["status"], "verified")
+
     def test_docs_review_passes_and_snapshots_documentation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -88,7 +105,11 @@ class DocumentationReviewTests(unittest.TestCase):
 def write_docs(root: Path, include_api: bool) -> None:
     write_file(root / "docs" / "requirements.md", "# Requirements\n")
     write_file(root / "docs" / "detailed-design.md", "# Detailed Design\n")
-    write_file(root / "README.md", "# Project\n")
+    write_file(
+        root / "README.md",
+        "# Project\n\nRun with `PYTHONPATH=src python -m ai_pipeline --help`.\n"
+        "Run tests with `python -m unittest discover -s tests`.\n",
+    )
     if include_api:
         write_file(
             root / "docs" / "api.md",

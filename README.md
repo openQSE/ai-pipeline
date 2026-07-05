@@ -37,31 +37,34 @@ It helps by:
 
 ## Current Status
 
-The current implementation is the first runnable slice of the orchestrator.
+The current implementation is a local runnable orchestrator prototype.
 
 Implemented:
 
 - Python package and CLI entry point.
 - JSON-backed run state under `.agent-pipeline/`.
-- `init`, `status`, `resume`, `stage`, `gate`, and basic `change` commands.
-- Early ordered-flow enforcement.
-- Gate checks for requirements, design, design acceptance, and planning.
+- Ordered stage gates for requirements, design, planning, implementation,
+  validation, and documentation review.
+- Explicit human approvals and Design Author confirmations for required
+  baseline gates.
+- Artifact snapshots, approval records, decisions, review issues, change
+  requests, baseline invalidations, and activity events.
+- Append-only issue lifecycle transitions.
+- Phase start, review, test review, drift, and commit commands.
+- Final validation and documentation review gates.
+- Change-control classify, approve, and reopen behavior.
+- Summary and trace reports.
 - Runtime adapter scaffolding for manual, generic CLI, Codex exec, and Codex
   SDK runtimes.
-- Unit tests for CLI initialization and blocked mid-pipeline jumps.
+- Unit tests for pipeline state, gates, runtime adapters, phase flow,
+  validation, documentation review, change control, and reporting.
 
-Not implemented yet:
+Extension points:
 
-- Real agent invocation.
-- Runtime configuration loading.
-- Codex or Claude execution.
-- Artifact snapshots.
-- Full phase implementation loop.
-- Validation testing and documentation review automation.
-- Change request classify/reopen behavior.
-
-The repository is being built phase by phase. The runtime adapter structure is
-present, but the CLI does not yet call Codex, Claude, or another agent CLI.
+- The Codex exec and generic CLI adapters can invoke configured agent CLIs.
+- `CodexSdkRuntime` remains a documented extension point.
+- Documentation review has deterministic checks and can also consume
+  documentation-agent issue records.
 
 ## Install For Development
 
@@ -103,7 +106,9 @@ Create `docs/requirements.md`, then complete the requirements stage:
 ```bash
 mkdir -p docs
 printf '# Requirements\n' > docs/requirements.md
-PYTHONPATH=src python -m ai_pipeline stage requirements
+PYTHONPATH=src python -m ai_pipeline stage requirements \
+  --human-approved \
+  --author-confirmed
 ```
 
 The active stage becomes `design`.
@@ -112,20 +117,61 @@ Create `docs/detailed-design.md`, then move through design and design review:
 
 ```bash
 printf '# Detailed Design\n' > docs/detailed-design.md
-PYTHONPATH=src python -m ai_pipeline stage design
+PYTHONPATH=src python -m ai_pipeline stage design \
+  --human-approved
 PYTHONPATH=src python -m ai_pipeline stage design-review
-PYTHONPATH=src python -m ai_pipeline stage design-acceptance
+PYTHONPATH=src python -m ai_pipeline stage design-acceptance \
+  --human-approved
 ```
 
 Create `docs/implementation-plan.md`, then approve the plan stage:
 
 ```bash
 printf '# Implementation Plan\n' > docs/implementation-plan.md
-PYTHONPATH=src python -m ai_pipeline stage plan
+PYTHONPATH=src python -m ai_pipeline stage plan \
+  --human-approved \
+  --author-confirmed
 ```
 
-At this point the current slice advances to the `implementation` stage. The
-full phase implementation loop will be added in later phases.
+Each implementation-plan phase must include a `Requirements:` line that
+references requirement ids from `docs/requirements.md`, such as `REQ-1`.
+
+At this point the run advances to the `implementation` stage. Start one phase,
+record code review and test review, then record the verified git commit SHA:
+
+```bash
+PYTHONPATH=src python -m ai_pipeline phase start 1
+PYTHONPATH=src python -m ai_pipeline phase review 1 --pass
+PYTHONPATH=src python -m ai_pipeline phase test 1 --pass
+PYTHONPATH=src python -m ai_pipeline phase commit 1 --sha <commit-sha>
+```
+
+The phase commit command verifies that the SHA exists in the repository. A
+second phase cannot start while another phase is active.
+
+After all planned phases are committed, complete implementation and run
+validation:
+
+```bash
+PYTHONPATH=src python -m ai_pipeline stage implementation
+PYTHONPATH=src python -m ai_pipeline validate
+```
+
+Validation commands run as argument vectors. Use `--shell-command` only when
+shell behavior is required:
+
+```bash
+PYTHONPATH=src python -m ai_pipeline validate \
+  --command python -m unittest discover -s tests
+PYTHONPATH=src python -m ai_pipeline validate \
+  --shell-command "python -m unittest discover -s tests"
+```
+
+Complete final documentation review after validation passes:
+
+```bash
+PYTHONPATH=src python -m ai_pipeline docs-review
+```
 
 ## Flow Enforcement
 
@@ -148,6 +194,8 @@ Useful inspection commands:
 ```bash
 PYTHONPATH=src python -m ai_pipeline status
 PYTHONPATH=src python -m ai_pipeline resume
+PYTHONPATH=src python -m ai_pipeline report summary
+PYTHONPATH=src python -m ai_pipeline report trace
 PYTHONPATH=src python -m ai_pipeline gate requirements
 PYTHONPATH=src python -m ai_pipeline gate implementation
 ```
@@ -172,8 +220,17 @@ Show open requests:
 PYTHONPATH=src python -m ai_pipeline change status
 ```
 
-The `change classify` and `change reopen` command shapes exist, but their
-behavior is not implemented yet.
+Classify the earliest affected baseline, record human approval, then reopen:
+
+```bash
+PYTHONPATH=src python -m ai_pipeline change classify CR-0001 \
+  --baseline requirements
+PYTHONPATH=src python -m ai_pipeline change approve CR-0001 --human-approved
+PYTHONPATH=src python -m ai_pipeline change reopen CR-0001
+```
+
+Reopening invalidates downstream gates and matching artifact snapshots. The
+pipeline resumes from the reopened baseline stage.
 
 ## Agent Runtime Configuration
 
@@ -189,7 +246,7 @@ A compatible agent CLI must be able to:
 - Make filesystem write behavior clear to the orchestrator.
 - Keep credentials outside repository files and durable run state.
 
-The planned runtime configuration shape is:
+Runtime configuration shape:
 
 ```toml
 [runtime]
@@ -215,10 +272,9 @@ test_review = "codex"
 documentation = "codex"
 ```
 
-The first implementation slice includes the `RuntimeConfig` model and adapter
-placeholders. Runtime config loading and actual agent invocation are the next
-implementation steps before Codex, Claude, or another CLI can run inside the
-pipeline.
+Codex review roles run with `--sandbox read-only` by default. Coding and
+documentation-writing roles run with `--sandbox workspace-write` unless the
+runtime configuration supplies an explicit sandbox option.
 
 ## State Files
 
@@ -230,6 +286,11 @@ Important files:
 - `runs/<run-id>/manifest.json` stores active stage and completed gates.
 - `runs/<run-id>/activity-log.jsonl` stores run events.
 - `runs/<run-id>/change-requests.jsonl` stores change-control requests.
+- `runs/<run-id>/approvals.jsonl` stores human and agent approvals.
+- `runs/<run-id>/baseline-invalidations.jsonl` stores invalidated gates and
+  snapshots.
+- `runs/<run-id>/*-review.jsonl` stores append-only issue lifecycle records.
+- `runs/<run-id>/artifact-snapshots.jsonl` stores approved artifact snapshots.
 
 The `.agent-pipeline/` directory is ignored by git because it contains local
 run history.
@@ -248,5 +309,9 @@ Run the CLI smoke check:
 PYTHONPATH=src python -m ai_pipeline --help
 ```
 
-The next build steps are runtime configuration loading, artifact snapshots, and
-real adapter invocation for configured agent CLIs.
+Run a full smoke check:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
+```

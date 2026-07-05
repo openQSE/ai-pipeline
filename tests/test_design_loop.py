@@ -28,7 +28,14 @@ class DesignLoopTests(unittest.TestCase):
             self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
 
             code, _stdout, stderr = self.run_cli(
-                ["--root", str(root), "stage", "requirements"]
+                [
+                    "--root",
+                    str(root),
+                    "stage",
+                    "requirements",
+                    "--human-approved",
+                    "--author-confirmed",
+                ]
             )
 
             run_dir = next((root / ".agent-pipeline" / "runs").iterdir())
@@ -43,10 +50,30 @@ class DesignLoopTests(unittest.TestCase):
             write_file(root / "docs" / "detailed-design.md", "# Design\n")
             self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
             self.assertEqual(
-                self.run_cli(["--root", str(root), "stage", "requirements"])[0],
+                self.run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "stage",
+                        "requirements",
+                        "--human-approved",
+                        "--author-confirmed",
+                    ]
+                )[0],
                 0,
             )
-            self.assertEqual(self.run_cli(["--root", str(root), "stage", "design"])[0], 0)
+            self.assertEqual(
+                self.run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "stage",
+                        "design",
+                        "--human-approved",
+                    ]
+                )[0],
+                0,
+            )
             self.assertEqual(
                 self.run_cli(
                     [

@@ -91,6 +91,10 @@ class StateStore:
             event.event_id = f"EVT-{len(self.read_jsonl(path)) + 1:05d}"
         self.append_jsonl(self.run_dir(manifest.run_id) / "activity-log.jsonl", event)
 
+    def read_activity(self) -> list[dict[str, object]]:
+        manifest = self.load_current_manifest()
+        return self.read_jsonl(self.run_dir(manifest.run_id) / "activity-log.jsonl")
+
     def append_change_request(self, data: ChangeRequest | dict[str, object]) -> None:
         manifest = self.load_current_manifest()
         self.append_jsonl(self.run_dir(manifest.run_id) / "change-requests.jsonl", data)
@@ -112,6 +116,11 @@ class StateStore:
         manifest = self.load_current_manifest()
         path = self.run_dir(manifest.run_id) / "artifact-snapshots.jsonl"
         self.append_jsonl(path, snapshot)
+
+    def read_artifact_snapshots(self) -> list[dict[str, object]]:
+        manifest = self.load_current_manifest()
+        path = self.run_dir(manifest.run_id) / "artifact-snapshots.jsonl"
+        return self.read_jsonl(path)
 
     def append_review_issue(self, file_name: str, issue: ReviewIssue) -> None:
         manifest = self.load_current_manifest()

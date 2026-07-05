@@ -335,25 +335,29 @@ The baseline CLI exposes commands that match the pipeline stages.
 ```text
 ai-pipeline init
 ai-pipeline status
-ai-pipeline stage requirements
-ai-pipeline stage design
+ai-pipeline stage requirements --human-approved --author-confirmed
+ai-pipeline stage design --human-approved
 ai-pipeline stage design-review
-ai-pipeline stage design-acceptance
-ai-pipeline stage plan
+ai-pipeline stage design-acceptance --human-approved
+ai-pipeline stage plan --human-approved --author-confirmed
+ai-pipeline stage implementation
 ai-pipeline phase start <n>
-ai-pipeline phase review <n>
-ai-pipeline phase test <n>
-ai-pipeline phase commit <n>
-ai-pipeline validate
+ai-pipeline phase review <n> --pass
+ai-pipeline phase test <n> --pass
+ai-pipeline phase commit <n> --sha <commit-sha>
+ai-pipeline validate [--command <argv>...]
 ai-pipeline docs-review
 ai-pipeline gate <name>
 ai-pipeline plan check
 ai-pipeline plan update
 ai-pipeline change open
 ai-pipeline change classify <id> [--baseline <baseline>]
+ai-pipeline change approve <id> --human-approved
 ai-pipeline change reopen <id>
 ai-pipeline change status
 ai-pipeline resume
+ai-pipeline report summary
+ai-pipeline report trace
 ```
 
 The CLI is intentionally explicit. Each command performs one stage transition,
@@ -383,9 +387,8 @@ The gate engine owns these decisions:
 
 Change-control commands classify the earliest affected baseline and invalidate
 downstream gates that depended on the old baseline. Classification remains a
-blocking state until the human operator reopens the affected baseline. The
-pipeline then resumes from the reopened stage and advances through the normal
-gate sequence.
+blocking state until the human operator approves reopening. The pipeline then
+resumes from the reopened stage and advances through the normal gate sequence.
 
 ## Implementation Plan Maintenance
 
@@ -433,6 +436,8 @@ or manually waived.
 
 ### Phase 0. Repository Foundation
 
+Requirements: REQ-1, REQ-14
+
 Create the package skeleton, test harness, formatter configuration, and CLI
 entry point.
 
@@ -452,6 +457,8 @@ Acceptance criteria:
 
 ### Phase 1. Artifact Templates
 
+Requirements: REQ-3, REQ-5
+
 Create templates for the core pipeline artifacts.
 
 Scope:
@@ -470,6 +477,8 @@ Acceptance criteria:
 
 ### Phase 2. State Store
 
+Requirements: REQ-4, REQ-5, REQ-13, REQ-14
+
 Implement durable JSON and JSONL state handling.
 
 Scope:
@@ -479,6 +488,7 @@ Scope:
 - Append `activity-log.jsonl`.
 - Append review issue files.
 - Append `change-requests.jsonl`.
+- Append approval and baseline invalidation records.
 - Write `phase-status.json`.
 - Append `decisions.jsonl`.
 - Store message files and raw runtime streams.
@@ -487,11 +497,14 @@ Acceptance criteria:
 
 - Appends are atomic enough for local use.
 - JSONL files remain valid after repeated writes.
+- Review issue lifecycle transitions are append-only.
 - State can be loaded after process restart.
 - Secret values are redacted before state is written.
 - Change-control records can be loaded and linked to activity events.
 
 ### Phase 3. Gate Engine
+
+Requirements: REQ-1, REQ-2, REQ-3, REQ-5, REQ-9
 
 Implement deterministic gate checks.
 
@@ -515,12 +528,15 @@ Acceptance criteria:
 - Each gate returns pass, fail, or blocked.
 - Gate failures include concrete missing conditions.
 - Gate results are written to the activity log.
+- Gates verify approvals, current snapshots, and structured traceability.
 - Unit tests cover pass and fail cases.
 - Tests prove that later stages cannot start before predecessor gates pass.
 - Tests prove that reopened baselines invalidate downstream gates.
 - Tests prove that phase-scope changes block review until the plan is updated.
 
 ### Phase 4. Runtime Adapter Interface
+
+Requirements: REQ-6, REQ-7
 
 Implement the adapter boundary that lets the orchestrator call agents without
 knowing whether the agent is manual, Codex-backed, Claude-backed, SDK-backed,
@@ -543,9 +559,12 @@ Acceptance criteria:
 - Manual adapter can complete a stage from a response file.
 - Generic CLI adapter can invoke a configured command.
 - Runtime errors are represented as activity events.
+- Runtime invocation failures return normalized `AgentResult` values.
 - The orchestrator can swap adapters through configuration.
 
 ### Phase 5. CLI Runtime Adapters
+
+Requirements: REQ-5, REQ-6, REQ-7
 
 Implement automated agent invocation through the generic CLI adapter and the
 default Codex exec adapter.
@@ -567,6 +586,7 @@ Acceptance criteria:
 
 - Design review can run through the configured default runtime.
 - Codex can run through `codex exec --json` and produce issue JSONL.
+- Codex sandbox mode is explicit for review and write roles.
 - A second CLI runtime can be configured through the generic adapter.
 - Structured outputs conform to the expected response schema.
 - Coding-agent turns can run with workspace-write permission.
@@ -574,6 +594,8 @@ Acceptance criteria:
 - Failures leave the stage resumable.
 
 ### Phase 6. Requirements And Design Loops
+
+Requirements: REQ-1, REQ-2, REQ-3, REQ-4, REQ-5
 
 Implement the human/ElectroBoy requirements and design stages.
 
@@ -589,12 +611,15 @@ Scope:
 Acceptance criteria:
 
 - Requirements approval is recorded before formal design review.
+- Required approvals are explicit state records, not inferred from files.
 - Design commands fail before the requirements gate passes.
 - Design review checks against approved requirements.
 - Human design acceptance blocks implementation planning.
 - Approved requirements and design snapshots are stored.
 
 ### Phase 7. Implementation Planning
+
+Requirements: REQ-2, REQ-3, REQ-5, REQ-9
 
 Implement collaborative implementation-plan generation and approval.
 
@@ -612,12 +637,16 @@ Acceptance criteria:
 - Coding cannot start until the implementation gate passes.
 - Planning cannot start until human design acceptance passes.
 - Every phase references relevant requirements.
+- Traceability is parsed from phase `Requirements:` lines and checked against
+  requirement ids from `docs/requirements.md`.
 - The human operator sees and approves the phase plan.
 - Plan changes discovered during development are recorded before review
   continues.
 - The activity log records plan approval and snapshot events.
 
 ### Phase 8. Phase Implementation Loop
+
+Requirements: REQ-4, REQ-5, REQ-8, REQ-9
 
 Implement one-phase-at-a-time coding, review, test review, and commit flow.
 
@@ -636,12 +665,17 @@ Scope:
 Acceptance criteria:
 
 - Each phase is committed independently.
+- A new phase cannot start while another phase is active.
+- Phase review and test review can update only the active phase.
+- Phase commits require an existing git commit SHA.
 - Code review and phase test review issues block commits.
 - Phase-scope drift blocks review and commit until the plan is updated.
 - Test commands and outputs are stored in the activity log.
 - Phase changes are limited to the active phase scope.
 
 ### Phase 9. Validation Testing
+
+Requirements: REQ-5, REQ-10, REQ-11
 
 Implement final validation of the completed codebase.
 
@@ -658,11 +692,16 @@ Scope:
 Acceptance criteria:
 
 - Final documentation review cannot start until validation passes.
+- Validation does not pass while blocker or major validation issues remain.
+- Validation commands run as argument vectors unless explicit shell mode is
+  requested.
 - Validation issues return work to the coding agent.
 - Validation fixes go through code review and phase test review.
 - Validation report is stored as a run artifact.
 
 ### Phase 10. Documentation Review
+
+Requirements: REQ-5, REQ-12
 
 Implement final documentation verification.
 
@@ -679,10 +718,14 @@ Acceptance criteria:
 
 - Documentation gate passes only after validation passes.
 - Public API documentation matches code.
+- Generated missing-file issues are verified automatically after the file is
+  restored.
 - Requirements documentation matches implemented behavior.
 - README can be followed by a new contributor.
 
 ### Phase 11. Change Control And Iteration
+
+Requirements: REQ-5, REQ-13
 
 Implement controlled reopening of requirements, design, planning, or
 implementation work.
@@ -700,11 +743,15 @@ Acceptance criteria:
 
 - Completed runs can reopen requirements or design through change control.
 - Later-stage findings can reopen the earliest affected baseline.
+- Reopen requires classification and human approval.
 - Invalidated gates no longer authorize later stages.
+- Invalidated artifact snapshots are recorded explicitly.
 - The activity log explains why the pipeline moved backward.
 - The run history remains append-only.
 
 ### Phase 12. Resume And Reporting
+
+Requirements: REQ-5, REQ-14
 
 Implement restart-safe resume behavior and human-readable reporting.
 
@@ -722,6 +769,8 @@ Acceptance criteria:
 - The pipeline can resume after interruption.
 - Reports explain what happened and why the current state is blocked or ready.
 - Reports show invalidated gates and the active reopened stage.
+- Reports include decisions, phase commits, snapshots, and baseline
+  invalidations.
 - Run history can reconstruct agent steps and decisions.
 
 ## Recommended Initial Milestone

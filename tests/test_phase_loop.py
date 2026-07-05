@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -52,14 +53,31 @@ class PhaseLoopTests(unittest.TestCase):
                 self.run_cli(["--root", str(root), "phase", "test", "1", "--pass"])[0],
                 0,
             )
+            sha = create_git_commit(root)
             passed, stdout, _stderr = self.run_cli(
-                ["--root", str(root), "phase", "commit", "1", "--sha", "abc"]
+                ["--root", str(root), "phase", "commit", "1", "--sha", sha]
             )
 
         self.assertEqual(blocked, 1)
         self.assertIn("code review has not passed", stderr)
         self.assertEqual(passed, 0)
         self.assertIn("committed phase: 1", stdout)
+
+    def test_phase_start_blocks_different_active_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.prepare_implementation_run(root)
+            self.assertEqual(
+                self.run_cli(["--root", str(root), "phase", "start", "1"])[0],
+                0,
+            )
+
+            code, _stdout, stderr = self.run_cli(
+                ["--root", str(root), "phase", "start", "2"]
+            )
+
+        self.assertEqual(code, 1)
+        self.assertIn("another phase is already active", stderr)
 
     def test_phase_drift_blocks_commit_until_plan_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,8 +122,9 @@ class PhaseLoopTests(unittest.TestCase):
                 )[0],
                 0,
             )
+            sha = create_git_commit(root)
             passed, _stdout, _stderr = self.run_cli(
-                ["--root", str(root), "phase", "commit", "1"]
+                ["--root", str(root), "phase", "commit", "1", "--sha", sha]
             )
 
         self.assertEqual(blocked, 1)
@@ -116,6 +135,34 @@ class PhaseLoopTests(unittest.TestCase):
 def write_file(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def create_git_commit(root: Path) -> str:
+    subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.name", "Test User"],
+        check=True,
+        capture_output=True,
+    )
+    write_file(root / "phase.txt", "phase\n")
+    subprocess.run(["git", "-C", str(root), "add", "phase.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-m", "phase"],
+        check=True,
+        capture_output=True,
+    )
+    completed = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
 
 
 if __name__ == "__main__":

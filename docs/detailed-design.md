@@ -323,8 +323,11 @@ Directory layout:
   runs/
     <run-id>/
       manifest.json
+      approvals.jsonl
       activity-log.jsonl
       change-requests.jsonl
+      baseline-invalidations.jsonl
+      artifact-snapshots.jsonl
       design-review.jsonl
       phase-<n>-code-review.jsonl
       phase-<n>-test-review.jsonl
@@ -354,6 +357,10 @@ and commit. The review files store the full issue records. The activity log
 links those issue records to the events that created, changed, or verified
 them.
 
+Issue files are append-only. Commands that resolve, verify, reject, defer, or
+escalate a finding append a new lifecycle record for the same issue id. Readers
+collapse those records to the latest state when evaluating gates.
+
 The `messages/` directory stores the agent-facing text for events that need
 full context. Each message file contains the relevant prompt, response,
 review text, or command summary. The activity log points to these files by
@@ -363,6 +370,10 @@ The `artifacts/` directory stores approved snapshots of every pipeline
 artifact for the run. The working copies remain in their normal repository
 locations, and the run snapshots preserve the exact versions used at stage
 gates and approvals.
+
+Change control records baseline invalidations that link reopened baselines to
+the downstream gates and artifact snapshot refs that no longer authorize later
+stages.
 
 ## Pipeline Stages
 
@@ -1070,12 +1081,15 @@ Validation testing gate:
 
 - All planned phases are committed.
 - The commit gate has passed for every planned phase.
+- Each planned phase has a verified git commit SHA.
 - The full test suite passes.
 - Validation testing has checked the completed codebase against
   `docs/requirements.md`.
 - Validation testing has checked integrated behavior and architecture against
   `docs/detailed-design.md`.
 - No blocker or major validation review issues remain.
+- Validation commands run as argument vectors unless the operator explicitly
+  requests shell mode.
 - Validation commands, results, and findings are stored in the activity log.
 - `validation-review.jsonl` and `validation-report.md` are stored for the run.
 
@@ -1114,6 +1128,10 @@ snapshot that depended on the changed baseline. The invalidated records remain
 in the run history for audit, but they no longer authorize later stages. The
 pipeline resumes from the reopened stage and advances through the normal gate
 sequence again.
+
+Reopen requires a classified change-control request and a human approval event.
+Open requests keep the run blocked until they are classified, approved, or
+closed by a recorded decision.
 
 Completed runs can also iterate through the same mechanism. A new requirement
 or design change after completion creates a change-control request, reopens the

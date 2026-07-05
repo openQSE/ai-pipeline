@@ -49,7 +49,14 @@ class CliTests(unittest.TestCase):
             self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
 
             code, stdout, stderr = self.run_cli(
-                ["--root", str(root), "stage", "requirements"]
+                [
+                    "--root",
+                    str(root),
+                    "stage",
+                    "requirements",
+                    "--human-approved",
+                    "--author-confirmed",
+                ]
             )
             gate_code, gate_stdout, _gate_stderr = self.run_cli(
                 ["--root", str(root), "gate", "requirements"]
@@ -66,7 +73,16 @@ class CliTests(unittest.TestCase):
             write_file(root / "docs" / "implementation-plan.md", "# Plan\n")
             self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
             self.assertEqual(
-                self.run_cli(["--root", str(root), "stage", "requirements"])[0],
+                self.run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "stage",
+                        "requirements",
+                        "--human-approved",
+                        "--author-confirmed",
+                    ]
+                )[0],
                 0,
             )
 

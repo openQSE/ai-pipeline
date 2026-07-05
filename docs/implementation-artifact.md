@@ -34,6 +34,7 @@ Implemented:
 - Added artifact snapshot support with SHA-256 checksums.
 - Added `ai-pipeline artifacts init` and `ai-pipeline artifacts snapshot`.
 - Added artifact snapshot records under the active run.
+- Added activity-log events for manual artifact snapshots.
 - Added artifact tests for template safety and snapshot creation.
 
 Verification:
@@ -48,7 +49,11 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
 Implemented:
 
 - Added structured models for review issues, decisions, and phase status.
+- Added structured models for approvals, stage state, change requests, and
+  baseline invalidations.
 - Added JSONL helpers for review issue files and decision records.
+- Made review issue reads collapse append-only lifecycle records to the latest
+  issue state.
 - Added phase status persistence in `.agent-pipeline/phase-status.json`.
 - Added message and raw runtime stream writers.
 - Added recursive redaction for JSON-compatible state records.
@@ -67,6 +72,8 @@ Implemented:
 
 - Added gate constants for stage order, change control, plan currency, code
   review, phase test review, and commit readiness.
+- Added approval and snapshot checks to predecessor gates.
+- Added gate evaluation activity events.
 - Added change-control gate checks that block stage transitions while change
   requests remain open.
 - Added implementation-plan currency checks for active phase drift.
@@ -95,6 +102,7 @@ Implemented:
 - Added runtime factory functions for manual, generic CLI, Codex exec, and
   Codex SDK adapters.
 - Implemented manual runtime completion from a configured response file.
+- Normalized subprocess runtime failures as failed `AgentResult` values.
 - Added tests for config parsing, role selection, and manual runtime results.
 
 Verification:
@@ -115,6 +123,9 @@ Implemented:
 - Added `ai-pipeline agent run` for configured role invocation.
 - Stored agent prompts, responses, raw runtime events, and activity events.
 - Added runtime adapter tests for generic JSON output and Codex JSONL output.
+- Added explicit Codex sandbox selection for read-only review roles and
+  workspace-write coding roles.
+- Stored structured agent issues in the mapped review issue files.
 
 Verification:
 
@@ -130,6 +141,10 @@ Implemented:
 - Added artifact snapshots when requirements, design review, design
   acceptance, or implementation planning stages complete.
 - Added `ai-pipeline issues add`, `issues list`, and `issues resolve`.
+- Added explicit stage approval records for requirements, design, design
+  acceptance, and planning.
+- Made issue resolution append a verified lifecycle transition instead of
+  rewriting review history.
 - Blocked design-review completion while open blocker or major design issues
   remain.
 - Preserved design review issue records in run JSONL files.
@@ -148,7 +163,9 @@ Implemented:
 
 - Added `ai-pipeline plan check` for phase-to-requirement traceability.
 - Added `ai-pipeline plan update` to record implementation-plan changes.
-- Blocked plan-stage approval when traceability is missing.
+- Replaced substring traceability checks with phase parsing and REQ-id
+  validation against `docs/requirements.md`.
+- Blocked plan-stage approval when structured traceability is missing.
 - Snapshotted the implementation plan when plan updates are recorded.
 - Added implementation-plan command entries to `docs/implementation-plan.md`.
 - Added plan tests for traceability checks and update recording.
@@ -169,6 +186,9 @@ Implemented:
 - Added `ai-pipeline phase test --pass` for phase test review completion.
 - Added `ai-pipeline phase drift` for active-phase plan drift.
 - Added `ai-pipeline phase commit` with commit-gate enforcement.
+- Blocked a second active phase from overwriting an uncommitted phase.
+- Required review and test review commands to target the active phase.
+- Required phase commits to reference an existing git commit SHA.
 - Made plan updates restore active-phase plan currency.
 - Added tests for review-gated phase commits and plan-drift blocking.
 
@@ -186,10 +206,15 @@ Implemented:
 - Added `ai-pipeline validate` for final validation testing.
 - Added support for one or more validation commands through `--command`.
 - Added a default validation command that runs the unit test suite.
+- Ran validation commands as argument vectors unless explicit shell mode is
+  requested.
 - Wrote validation output to the run artifact
   `artifacts/validation-report.md`.
 - Stored raw validation command results in the run raw-event log.
 - Added blocking `validation-review.jsonl` issues when validation fails.
+- Blocked validation success while open blocker or major validation issues
+  remain.
+- Required every planned phase to be committed before validation can pass.
 - Advanced the run from validation to documentation review when validation
   passes.
 - Allowed the implementation stage to transition into validation after all
@@ -212,6 +237,10 @@ Implemented:
   and `docs/api.md` before the documentation gate can pass.
 - Added blocking `documentation-review.jsonl` issues for missing required
   documentation files.
+- Verified generated missing-file issues automatically when the file is
+  restored.
+- Added deterministic content checks for README usage, tests, and public CLI
+  documentation.
 - Blocked documentation review while open blocker or major documentation
   review issues remain.
 - Snapshotted final documentation artifacts when documentation review passes.
@@ -233,14 +262,42 @@ Implemented:
 - Kept classified change requests blocking until they are reopened.
 - Added baseline validation for change-control commands.
 - Implemented `ai-pipeline change classify <id> [--baseline <baseline>]`.
+- Implemented `ai-pipeline change approve <id> --human-approved`.
 - Implemented `ai-pipeline change reopen <id>`.
+- Required classification and human approval before reopening.
 - Invalidated downstream gates when a baseline is reopened.
+- Recorded invalidated artifact snapshot refs in baseline invalidation records.
 - Moved the active stage back to the reopened baseline stage.
 - Recorded reopen decisions and change-control activity events.
 - Updated `docs/implementation-plan.md` to document classify and reopen
   behavior.
 - Added change-control tests for classified blockers and downstream gate
   invalidation.
+
+Verification:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
+```
+
+## Phase 12. Resume And Reporting
+
+Implemented:
+
+- Added StateStore readers for activity events and artifact snapshots.
+- Expanded `ai-pipeline status` to show active phase, invalidated gates, open
+  change requests, open review issues, and blocked gates.
+- Expanded `ai-pipeline resume` to show the resumed stage, active phase, open
+  blockers, and blocked gates.
+- Added `ai-pipeline report summary` for human-readable run summaries.
+- Added `ai-pipeline report trace` for activity-log trace reports.
+- Expanded reports with decisions, phase commits, snapshots, and baseline
+  invalidations.
+- Added `--output` support for writing generated reports to files.
+- Updated `docs/implementation-plan.md` to list the report commands.
+- Added reporting tests for resume blockers and written summary and trace
+  reports.
 
 Verification:
 
