@@ -12,6 +12,7 @@ class AgentInvocation:
     role: str
     prompt: str
     context_paths: list[str] = field(default_factory=list)
+    output_schema: dict[str, object] | None = None
 
 
 @dataclass
@@ -21,6 +22,10 @@ class AgentResult:
     ok: bool
     final_message: str
     issues: list[dict[str, object]] = field(default_factory=list)
+    raw_events: list[dict[str, object]] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=list)
+    commands: list[str] = field(default_factory=list)
+    error: str | None = None
 
 
 class AgentRuntime:

@@ -83,3 +83,23 @@ Verification:
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
 ```
+
+## Phase 4. Runtime Adapter Interface
+
+Implemented:
+
+- Added `PipelineConfig` loading for `agent-pipeline.toml`.
+- Added runtime selection by role with a default Codex runtime.
+- Expanded `AgentInvocation` and `AgentResult` to carry schema, event,
+  command, changed-file, and error data.
+- Added runtime factory functions for manual, generic CLI, Codex exec, and
+  Codex SDK adapters.
+- Implemented manual runtime completion from a configured response file.
+- Added tests for config parsing, role selection, and manual runtime results.
+
+Verification:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
+```
