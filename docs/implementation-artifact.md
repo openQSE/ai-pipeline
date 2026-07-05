@@ -202,3 +202,25 @@ Verification:
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
 ```
+
+## Phase 10. Documentation Review
+
+Implemented:
+
+- Added `ai-pipeline docs-review` for final documentation verification.
+- Required `docs/requirements.md`, `docs/detailed-design.md`, `README.md`,
+  and `docs/api.md` before the documentation gate can pass.
+- Added blocking `documentation-review.jsonl` issues for missing required
+  documentation files.
+- Blocked documentation review while open blocker or major documentation
+  review issues remain.
+- Snapshotted final documentation artifacts when documentation review passes.
+- Completed the documentation gate and advanced the run to `complete`.
+- Added documentation review tests for missing-file and passing-doc paths.
+
+Verification:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
+```

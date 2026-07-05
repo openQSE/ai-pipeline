@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import io
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from ai_pipeline.cli import main  # noqa: E402
+from ai_pipeline.models import (  # noqa: E402
+    GATE_DOCUMENTATION,
+    GATE_VALIDATION_TESTING,
+    STAGE_COMPLETE,
+    STAGE_DOCS_REVIEW,
+)
+from ai_pipeline.state_store import StateStore  # noqa: E402
+
+
+class DocumentationReviewTests(unittest.TestCase):
+    def run_cli(self, args: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(args)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def prepare_docs_review_run(self, root: Path) -> StateStore:
+        store = StateStore(root)
+        manifest = store.init_run(run_id="run-1")
+        manifest.complete_gate(GATE_VALIDATION_TESTING)
+        manifest.set_active_stage(STAGE_DOCS_REVIEW)
+        store.save_manifest(manifest)
+        return store
+
+    def test_docs_review_records_missing_file_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.prepare_docs_review_run(root)
+            write_docs(root, include_api=False)
+
+            code, stdout, stderr = self.run_cli(
+                ["--root", str(root), "docs-review"]
+            )
+            issues = store.read_review_issues("documentation-review.jsonl")
+
+            self.assertEqual(code, 1, stderr)
+            self.assertIn("documentation review: failed", stdout)
+            self.assertEqual(issues[0]["severity"], "blocker")
+            self.assertIn("docs/api.md", issues[0]["summary"])
+
+    def test_docs_review_passes_and_snapshots_documentation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.prepare_docs_review_run(root)
+            write_docs(root, include_api=True)
+
+            code, stdout, stderr = self.run_cli(
+                ["--root", str(root), "docs-review"]
+            )
+            manifest = store.load_current_manifest()
+            api_snapshot = (
+                store.run_dir(manifest.run_id)
+                / "artifacts"
+                / "docs"
+                / "api.md"
+            )
+            readme_snapshot = (
+                store.run_dir(manifest.run_id) / "artifacts" / "README.md"
+            )
+            activity = store.read_activity()
+
+            self.assertEqual(code, 0, stderr)
+            self.assertIn("documentation review: passed", stdout)
+            self.assertEqual(manifest.active_stage, STAGE_COMPLETE)
+            self.assertTrue(manifest.has_gate(GATE_DOCUMENTATION))
+            self.assertTrue(api_snapshot.exists())
+            self.assertTrue(readme_snapshot.exists())
+            self.assertIn(
+                ".agent-pipeline/shared/runs/run-1/artifacts/README.md",
+                activity[-1]["artifact_snapshot_refs"],
+            )
+
+
+def write_docs(root: Path, include_api: bool) -> None:
+    write_file(root / "docs" / "requirements.md", "# Requirements\n")
+    write_file(root / "docs" / "detailed-design.md", "# Detailed Design\n")
+    write_file(root / "README.md", "# Project\n")
+    if include_api:
+        write_file(
+            root / "docs" / "api.md",
+            "# API\n\n"
+            "Commands: new init status resume deactivate requirements "
+            "requirements-approve design design-review design-approve "
+            "implementation-plan plan-approve code document code-approve "
+            "report stage gate phase validate docs-review plan issues agent "
+            "artifacts change.\n",
+        )
+
+
+def write_file(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+if __name__ == "__main__":
+    unittest.main()

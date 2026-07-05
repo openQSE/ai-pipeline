@@ -14,15 +14,17 @@ from .gates import GateEngine
 from .models import (
     ActivityEvent,
     DecisionRecord,
+    GATE_COMMIT,
+    GATE_DOCUMENTATION,
     GATE_DESIGN,
     GATE_HUMAN_DESIGN_ACCEPTANCE,
     GATE_IMPLEMENTATION,
     GATE_REQUIREMENTS,
     GATE_VALIDATION_TESTING,
     NEXT_STAGE,
-    GATE_COMMIT,
     PhaseStatus,
     ReviewIssue,
+    STAGE_COMPLETE,
     STAGE_DESIGN,
     STAGE_DESIGN_ACCEPTANCE,
     STAGE_DESIGN_REVIEW,
@@ -58,6 +60,13 @@ STAGE_SNAPSHOT_ARTIFACTS = {
     STAGE_DESIGN_ACCEPTANCE: "docs/detailed-design.md",
     STAGE_PLAN: "docs/implementation-plan.md",
 }
+
+DOCUMENTATION_REVIEW_FILES = [
+    "docs/requirements.md",
+    "docs/detailed-design.md",
+    "README.md",
+    "docs/api.md",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -109,6 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
     phase_drift = phase_subparsers.add_parser("drift", help="record plan drift")
     phase_drift.add_argument("phase", type=int)
     phase_drift.add_argument("--reason", required=True)
+
+    subparsers.add_parser("docs-review", help="run final documentation review")
 
     validate = subparsers.add_parser("validate", help="run validation testing")
     validate.add_argument(
@@ -208,6 +219,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_gate(store, engine, args.gate)
         if args.command == "phase":
             return _cmd_phase(store, engine, args)
+        if args.command == "docs-review":
+            return _cmd_docs_review(store, engine)
         if args.command == "validate":
             return _cmd_validate(store, args)
         if args.command == "plan":
@@ -495,6 +508,65 @@ def _cmd_validate(store: StateStore, args: argparse.Namespace) -> int:
     print("validation: passed")
     print(f"active stage: {manifest.active_stage}")
     print(f"report: {report_path}")
+    return 0
+
+
+def _cmd_docs_review(store: StateStore, engine: GateEngine) -> int:
+    manifest = store.load_current_manifest()
+    order = engine.stage_order(STAGE_DOCS_REVIEW, manifest)
+    if not order.passed:
+        _print_gate_failure(order.messages)
+        return 1
+
+    missing = [
+        relative_path
+        for relative_path in DOCUMENTATION_REVIEW_FILES
+        if not (store.root / relative_path).exists()
+    ]
+    if missing:
+        _append_missing_documentation_issues(store, missing)
+        store.append_activity(
+            ActivityEvent(
+                actor="documentation-agent",
+                stage=STAGE_DOCS_REVIEW,
+                action="documentation-review-failed",
+                summary="Documentation review failed because files are missing.",
+            )
+        )
+        print("documentation review: failed")
+        for relative_path in missing:
+            print(f"missing: {relative_path}")
+        return 1
+
+    blocking = _blocking_issues(store, "documentation-review.jsonl")
+    if blocking:
+        _print_gate_failure(["blocking documentation review issues remain"])
+        return 1
+
+    manager = ArtifactManager(store.root)
+    event_id = f"documentation-review-{len(manifest.completed_gates) + 1}"
+    snapshot_refs: list[str] = []
+    for relative_path in DOCUMENTATION_REVIEW_FILES:
+        snapshot = manager.snapshot(manifest.run_id, relative_path, event_id)
+        store.append_artifact_snapshot(snapshot)
+        snapshot_refs.append(snapshot.snapshot_path)
+
+    manifest.complete_gate(GATE_DOCUMENTATION)
+    manifest.set_active_stage(STAGE_COMPLETE)
+    store.save_manifest(manifest)
+    store.append_activity(
+        ActivityEvent(
+            actor="documentation-agent",
+            stage=STAGE_DOCS_REVIEW,
+            gate=GATE_DOCUMENTATION,
+            action="documentation-review-passed",
+            summary="Documentation review passed and final docs were snapshotted.",
+            status="pass",
+            artifact_snapshot_refs=snapshot_refs,
+        )
+    )
+    print("documentation review: passed")
+    print(f"active stage: {manifest.active_stage}")
     return 0
 
 
@@ -857,22 +929,7 @@ def _documentation_semantic_errors(root: Path) -> list[str]:
     errors: list[str] = []
     readme = (root / "README.md").read_text(encoding="utf-8")
     api = (root / "docs" / "api.md").read_text(encoding="utf-8")
-    for command in [
-        "init",
-        "status",
-        "resume",
-        "report",
-        "stage",
-        "gate",
-        "phase",
-        "validate",
-        "docs-review",
-        "plan",
-        "issues",
-        "agent",
-        "artifacts",
-        "change",
-    ]:
+    for command in _top_level_cli_commands():
         if command not in api:
             errors.append(f"docs/api.md does not document `{command}`")
     if "PYTHONPATH=src" not in readme and "pip install -e ." not in readme:
@@ -880,6 +937,14 @@ def _documentation_semantic_errors(root: Path) -> list[str]:
     if "test" not in readme.lower():
         errors.append("README.md does not describe how to run tests")
     return errors
+
+
+def _top_level_cli_commands() -> list[str]:
+    parser = build_parser()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return sorted(action.choices)
+    return []
 
 
 def _find_change_request(
