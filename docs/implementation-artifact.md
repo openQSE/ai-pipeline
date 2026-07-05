@@ -224,3 +224,27 @@ Verification:
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
 ```
+
+## Phase 11. Change Control And Iteration
+
+Implemented:
+
+- Added latest-state reads for append-only `change-requests.jsonl` events.
+- Kept classified change requests blocking until they are reopened.
+- Added baseline validation for change-control commands.
+- Implemented `ai-pipeline change classify <id> [--baseline <baseline>]`.
+- Implemented `ai-pipeline change reopen <id>`.
+- Invalidated downstream gates when a baseline is reopened.
+- Moved the active stage back to the reopened baseline stage.
+- Recorded reopen decisions and change-control activity events.
+- Updated `docs/implementation-plan.md` to document classify and reopen
+  behavior.
+- Added change-control tests for classified blockers and downstream gate
+  invalidation.
+
+Verification:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
+```

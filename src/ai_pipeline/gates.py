@@ -401,7 +401,7 @@ class GateEngine:
         return [
             request
             for request in self.store.read_change_requests()
-            if request.get("status") == "open"
+            if request.get("status") in {"open", "classified"}
         ]
 
     def _blocking_issues(self, issue_file: str) -> list[dict[str, object]]:

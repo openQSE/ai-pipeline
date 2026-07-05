@@ -196,7 +196,17 @@ class StateStore:
     def read_change_requests(self) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
         path = self.run_dir(manifest.run_id) / "change-requests.jsonl"
-        return self.read_jsonl(path)
+        records = self.read_jsonl(path)
+        latest: dict[str, dict[str, object]] = {}
+        order: list[str] = []
+        for record in records:
+            request_id = str(record.get("id", ""))
+            if not request_id:
+                continue
+            if request_id not in latest:
+                order.append(request_id)
+            latest[request_id] = record
+        return [latest[request_id] for request_id in order]
 
     def append_jsonl(self, path: Path, record: object) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

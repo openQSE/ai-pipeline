@@ -68,6 +68,49 @@ DOCUMENTATION_REVIEW_FILES = [
     "docs/api.md",
 ]
 
+CHANGE_BASELINE_STAGES = {
+    "requirements": STAGE_REQUIREMENTS,
+    "design": STAGE_DESIGN,
+    "plan": STAGE_PLAN,
+    "implementation": STAGE_IMPLEMENTATION,
+    "validation": STAGE_VALIDATION,
+    "documentation": STAGE_DOCS_REVIEW,
+}
+
+CHANGE_BASELINE_INVALIDATED_GATES = {
+    "requirements": [
+        GATE_REQUIREMENTS,
+        GATE_DESIGN,
+        GATE_HUMAN_DESIGN_ACCEPTANCE,
+        GATE_IMPLEMENTATION,
+        GATE_VALIDATION_TESTING,
+        GATE_DOCUMENTATION,
+    ],
+    "design": [
+        GATE_DESIGN,
+        GATE_HUMAN_DESIGN_ACCEPTANCE,
+        GATE_IMPLEMENTATION,
+        GATE_VALIDATION_TESTING,
+        GATE_DOCUMENTATION,
+    ],
+    "plan": [
+        GATE_IMPLEMENTATION,
+        GATE_VALIDATION_TESTING,
+        GATE_DOCUMENTATION,
+    ],
+    "implementation": [
+        GATE_VALIDATION_TESTING,
+        GATE_DOCUMENTATION,
+    ],
+    "validation": [
+        GATE_VALIDATION_TESTING,
+        GATE_DOCUMENTATION,
+    ],
+    "documentation": [
+        GATE_DOCUMENTATION,
+    ],
+}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-pipeline")
@@ -190,10 +233,15 @@ def build_parser() -> argparse.ArgumentParser:
     change_subparsers = change.add_subparsers(dest="change_command", required=True)
     change_subparsers.add_parser("status", help="list change-control requests")
     change_open = change_subparsers.add_parser("open", help="open a request")
-    change_open.add_argument("--baseline", required=True)
+    change_open.add_argument(
+        "--baseline",
+        choices=list(CHANGE_BASELINE_STAGES),
+        required=True,
+    )
     change_open.add_argument("--reason", required=True)
     change_classify = change_subparsers.add_parser("classify", help="classify request")
     change_classify.add_argument("id")
+    change_classify.add_argument("--baseline", choices=list(CHANGE_BASELINE_STAGES))
     change_reopen = change_subparsers.add_parser("reopen", help="reopen request")
     change_reopen.add_argument("id")
 
@@ -703,7 +751,10 @@ def _cmd_change(store: StateStore, args: argparse.Namespace) -> int:
         requests = store.read_change_requests()
         print(f"change requests: {len(requests)}")
         for request in requests:
-            print(f"  - {request['id']}: {request['baseline']}")
+            print(
+                f"  - {request['id']}: "
+                f"{request.get('status')} {request['baseline']}"
+            )
         return 0
 
     if args.change_command == "open":
@@ -715,6 +766,7 @@ def _cmd_change(store: StateStore, args: argparse.Namespace) -> int:
             "baseline": args.baseline,
             "reason": args.reason,
             "status": "open",
+            "event": "opened",
             "created_at": utc_now(),
         }
         store.append_change_request(request)
@@ -729,7 +781,96 @@ def _cmd_change(store: StateStore, args: argparse.Namespace) -> int:
         print(f"opened change request: {request['id']}")
         return 0
 
-    print("error: change command is not implemented yet", file=sys.stderr)
+    if args.change_command == "classify":
+        request = _find_change_request(store, args.id)
+        if request is None:
+            print(f"error: change request not found: {args.id}", file=sys.stderr)
+            return 1
+        if request.get("status") not in {"open", "classified"}:
+            print("error: change request is not open", file=sys.stderr)
+            return 1
+        baseline = args.baseline or str(request.get("baseline"))
+        if baseline not in CHANGE_BASELINE_STAGES:
+            print(f"error: unknown baseline: {baseline}", file=sys.stderr)
+            return 1
+        update = dict(request)
+        update.update(
+            {
+                "baseline": baseline,
+                "status": "classified",
+                "event": "classified",
+                "classified_at": utc_now(),
+            }
+        )
+        store.append_change_request(update)
+        store.append_activity(
+            ActivityEvent(
+                actor="orchestrator",
+                stage=store.load_current_manifest().active_stage,
+                action="change-request-classified",
+                summary=f"Classified change request {args.id} as {baseline}.",
+            )
+        )
+        print(f"classified change request: {args.id}")
+        print(f"baseline: {baseline}")
+        return 0
+
+    if args.change_command == "reopen":
+        request = _find_change_request(store, args.id)
+        if request is None:
+            print(f"error: change request not found: {args.id}", file=sys.stderr)
+            return 1
+        if request.get("status") not in {"open", "classified"}:
+            print("error: change request is not open", file=sys.stderr)
+            return 1
+
+        baseline = str(request.get("baseline"))
+        if baseline not in CHANGE_BASELINE_STAGES:
+            print(f"error: unknown baseline: {baseline}", file=sys.stderr)
+            return 1
+        manifest = store.load_current_manifest()
+        invalidated = CHANGE_BASELINE_INVALIDATED_GATES[baseline]
+        for gate in invalidated:
+            if gate not in manifest.invalidated_gates:
+                manifest.invalidated_gates.append(gate)
+        reopened_stage = CHANGE_BASELINE_STAGES[baseline]
+        manifest.set_active_stage(reopened_stage)
+        store.save_manifest(manifest)
+
+        update = dict(request)
+        update.update(
+            {
+                "status": "reopened",
+                "event": "reopened",
+                "reopened_at": utc_now(),
+                "reopened_stage": reopened_stage,
+                "invalidated_gates": list(invalidated),
+            }
+        )
+        store.append_change_request(update)
+        store.append_decision(
+            DecisionRecord(
+                decision_id=f"CHANGE-{len(store.read_decisions()) + 1:04d}",
+                stage=reopened_stage,
+                summary=f"Reopened {baseline} baseline",
+                rationale=str(request.get("reason", "")),
+            )
+        )
+        store.append_activity(
+            ActivityEvent(
+                actor="orchestrator",
+                stage=reopened_stage,
+                action="change-request-reopened",
+                summary=f"Reopened change request {args.id} at {baseline}.",
+            )
+        )
+        print(f"reopened change request: {args.id}")
+        print(f"active stage: {manifest.active_stage}")
+        print("invalidated gates:")
+        for gate in invalidated:
+            print(f"  - {gate}")
+        return 0
+
     return 2
 
 

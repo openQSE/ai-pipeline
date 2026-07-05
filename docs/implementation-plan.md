@@ -350,7 +350,7 @@ ai-pipeline gate <name>
 ai-pipeline plan check
 ai-pipeline plan update
 ai-pipeline change open
-ai-pipeline change classify <id>
+ai-pipeline change classify <id> [--baseline <baseline>]
 ai-pipeline change reopen <id>
 ai-pipeline change status
 ai-pipeline resume
@@ -382,8 +382,10 @@ The gate engine owns these decisions:
 - Reopening an earlier baseline requires a change-control request.
 
 Change-control commands classify the earliest affected baseline and invalidate
-downstream gates that depended on the old baseline. The pipeline then resumes
-from the reopened stage and advances through the normal gate sequence.
+downstream gates that depended on the old baseline. Classification remains a
+blocking state until the human operator reopens the affected baseline. The
+pipeline then resumes from the reopened stage and advances through the normal
+gate sequence.
 
 ## Implementation Plan Maintenance
 
