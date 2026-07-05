@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from ai_pipeline.adapters.base import AgentInvocation  # noqa: E402
-from ai_pipeline.config import parse_pipeline_config  # noqa: E402
+from ai_pipeline.config import load_pipeline_config, parse_pipeline_config  # noqa: E402
 from ai_pipeline.runtime import runtime_for_role  # noqa: E402
 
 
@@ -61,6 +61,36 @@ class RuntimeConfigTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.final_message, "accepted\n")
+
+    def test_project_config_path_supports_environment_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / ".agent-pipeline"
+            config_dir.mkdir()
+            (config_dir / "project.toml").write_text(
+                """
+                [runtime]
+                default = "manual"
+
+                [runtimes.manual]
+                adapter = "manual"
+                command = "manual"
+
+                [roles]
+                design_author = "manual"
+
+                [environment]
+                activate_python = false
+                python_activate = ".venv/bin/activate"
+                """,
+                encoding="utf-8",
+            )
+
+            config = load_pipeline_config(root)
+
+        self.assertEqual(config.default_runtime, "manual")
+        self.assertEqual(config.runtime_for_role("design_author").adapter, "manual")
+        self.assertEqual(config.environment["activate_python"], "false")
 
 
 if __name__ == "__main__":

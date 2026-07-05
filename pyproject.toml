@@ -12,10 +12,13 @@ license = { file = "LICENSE" }
 authors = [
   { name = "Amir Shehata", email = "shehataa@ornl.gov" }
 ]
-dependencies = []
+dependencies = [
+  "rich>=13",
+]
 
 [project.scripts]
 ai-pipeline = "ai_pipeline.cli:main"
+electroboy = "ai_pipeline.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

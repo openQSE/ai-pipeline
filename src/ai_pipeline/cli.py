@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -159,12 +160,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    new = subparsers.add_parser("new", help="create a pipeline project")
+    new.add_argument("path", help="project directory to create or initialize")
+    new.add_argument("--run-id", help="explicit run id for deterministic tests")
+    new.add_argument("--force", action="store_true", help="replace current run")
+
     init = subparsers.add_parser("init", help="initialize a pipeline run")
     init.add_argument("--run-id", help="explicit run id for deterministic tests")
     init.add_argument("--force", action="store_true", help="replace current run")
 
     subparsers.add_parser("status", help="show current pipeline status")
     subparsers.add_parser("resume", help="show the stage to resume")
+    subparsers.add_parser("deactivate", help="leave an activated pipeline project")
 
     report = subparsers.add_parser("report", help="generate pipeline reports")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
@@ -322,12 +329,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     engine = GateEngine(args.root)
 
     try:
+        if args.command == "new":
+            return _cmd_new(args)
         if args.command == "init":
             return _cmd_init(store, args)
         if args.command == "status":
             return _cmd_status(store, engine)
         if args.command == "resume":
             return _cmd_resume(store, engine)
+        if args.command == "deactivate":
+            return _cmd_deactivate(store)
         if args.command == "report":
             return _cmd_report(store, engine, args)
         if args.command == "stage":
@@ -359,6 +370,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.print_help(sys.stderr)
     return 2
+
+
+def _cmd_new(args: argparse.Namespace) -> int:
+    project_root = Path(args.path).resolve()
+    project_root.mkdir(parents=True, exist_ok=True)
+    _init_git_repository(project_root)
+    ArtifactManager(project_root).init_templates()
+    _write_project_config(project_root)
+    _write_project_gitignore(project_root)
+    _write_project_runtime(project_root)
+    _write_project_bin(project_root)
+
+    store = StateStore(project_root)
+    manifest = store.init_run(run_id=args.run_id, force=args.force)
+    print(f"project: {project_root}")
+    print(f"created run: {manifest.run_id}")
+    print(f"active stage: {manifest.active_stage}")
+    print(f"activate: source {project_root / 'bin' / 'activate'}")
+    return 0
 
 
 def _cmd_init(store: StateStore, args: argparse.Namespace) -> int:
@@ -399,6 +429,21 @@ def _cmd_resume(store: StateStore, engine: GateEngine) -> int:
     _print_count("open change requests", _open_change_requests(store))
     _print_count("open review issues", _open_review_issues(store))
     _print_list("blocked gates", _blocked_gate_lines(store, engine))
+    return 0
+
+
+def _cmd_deactivate(store: StateStore) -> int:
+    if store.current_run_id():
+        manifest = store.load_current_manifest()
+        store.append_activity(
+            ActivityEvent(
+                actor="orchestrator",
+                stage=manifest.active_stage,
+                action="project-deactivated",
+                summary="Left activated pipeline project environment.",
+            )
+        )
+    print("pipeline project deactivated")
     return 0
 
 
@@ -1192,6 +1237,219 @@ def _cmd_change(store: StateStore, args: argparse.Namespace) -> int:
         return 0
 
     return 2
+
+
+def _init_git_repository(project_root: Path) -> None:
+    if _is_git_worktree(project_root):
+        return
+    result = subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=project_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    fallback = subprocess.run(
+        ["git", "init"],
+        cwd=project_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if fallback.returncode != 0:
+        detail = fallback.stderr.strip() or result.stderr.strip()
+        raise StateError(f"git repository initialization failed: {detail}")
+
+
+def _is_git_worktree(project_root: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "--is-inside-work-tree"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _write_project_config(project_root: Path) -> None:
+    path = project_root / ".agent-pipeline" / "project.toml"
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        """[runtime]
+default = "codex"
+
+[runtimes.codex]
+adapter = "codex_exec"
+command = "codex"
+args = ["exec", "--json"]
+env = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "CODEX_HOME", "OPENAI_API_KEY"]
+structured_output = "json_schema"
+
+[roles]
+design_author = "codex"
+design_review = "codex"
+coding = "codex"
+code_review = "codex"
+test_review = "codex"
+documentation = "codex"
+
+[environment]
+activate_python = false
+python_activate = ".venv/bin/activate"
+python_managed_by_pipeline = false
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_project_gitignore(project_root: Path) -> None:
+    path = project_root / ".gitignore"
+    lines = []
+    if path.exists():
+        lines = path.read_text(encoding="utf-8").splitlines()
+    required = ".agent-pipeline/local/"
+    if required in lines:
+        return
+    if lines and lines[-1] != "":
+        lines.append("")
+    lines.extend(
+        [
+            "# AI Pipeline local runtime state",
+            required,
+        ]
+    )
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _write_project_bin(project_root: Path) -> None:
+    bin_dir = project_root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    activate = bin_dir / "activate"
+    activate.write_text(_activation_script(project_root), encoding="utf-8")
+    activate.chmod(0o755)
+    for name in ("ai-pipeline", "electroboy"):
+        path = bin_dir / name
+        path.write_text(_project_entrypoint_script(), encoding="utf-8")
+        path.chmod(0o755)
+
+
+def _write_project_runtime(project_root: Path) -> None:
+    source = _module_search_path() / "ai_pipeline"
+    target = project_root / ".agent-pipeline" / "local" / "runtime" / "src"
+    package_target = target / "ai_pipeline"
+    if package_target.exists():
+        shutil.rmtree(package_target)
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source,
+        package_target,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+
+
+def _activation_script(project_root: Path) -> str:
+    quoted_root = shlex.quote(str(project_root))
+    return f"""# AI Pipeline project activation script.
+# Source this file from a POSIX-compatible shell.
+
+_AI_PIPELINE_ACTIVATED_ROOT={quoted_root}
+_AI_PIPELINE_PREVIOUS_PATH="${{PATH:-}}"
+_AI_PIPELINE_PREVIOUS_PROJECT_ROOT="${{AI_PIPELINE_PROJECT_ROOT:-}}"
+_AI_PIPELINE_PREVIOUS_VIRTUAL_ENV="${{VIRTUAL_ENV:-}}"
+export _AI_PIPELINE_ACTIVATED_ROOT
+export _AI_PIPELINE_PREVIOUS_PATH
+export _AI_PIPELINE_PREVIOUS_PROJECT_ROOT
+export _AI_PIPELINE_PREVIOUS_VIRTUAL_ENV
+
+AI_PIPELINE_PROJECT_ROOT="$_AI_PIPELINE_ACTIVATED_ROOT"
+PATH="$AI_PIPELINE_PROJECT_ROOT/bin:$PATH"
+export AI_PIPELINE_PROJECT_ROOT
+export PATH
+
+_AI_PIPELINE_PROJECT_CONFIG="$AI_PIPELINE_PROJECT_ROOT/.agent-pipeline/project.toml"
+if [ -f "$_AI_PIPELINE_PROJECT_CONFIG" ] && \\
+    grep -Eq '^[[:space:]]*activate_python[[:space:]]*=[[:space:]]*true' \\
+        "$_AI_PIPELINE_PROJECT_CONFIG"; then
+    _AI_PIPELINE_PYTHON_ACTIVATE=$(sed -n \\
+        's/^[[:space:]]*python_activate[[:space:]]*=[[:space:]]*"\\(.*\\)".*/\\1/p' \\
+        "$_AI_PIPELINE_PROJECT_CONFIG" | tail -n 1)
+    if [ -z "$_AI_PIPELINE_PYTHON_ACTIVATE" ]; then
+        _AI_PIPELINE_PYTHON_ACTIVATE=".venv/bin/activate"
+    fi
+    if [ -f "$AI_PIPELINE_PROJECT_ROOT/$_AI_PIPELINE_PYTHON_ACTIVATE" ]; then
+        . "$AI_PIPELINE_PROJECT_ROOT/$_AI_PIPELINE_PYTHON_ACTIVATE"
+        if [ -z "$_AI_PIPELINE_PREVIOUS_VIRTUAL_ENV" ] && [ -n "${{VIRTUAL_ENV:-}}" ]; then
+            _AI_PIPELINE_OWNS_PYTHON_ENV=1
+            export _AI_PIPELINE_OWNS_PYTHON_ENV
+        fi
+    fi
+fi
+
+ai-pipeline() {{
+    if [ "${{1:-}}" = "deactivate" ]; then
+        command ai-pipeline --root "$AI_PIPELINE_PROJECT_ROOT" deactivate
+        if [ "${{_AI_PIPELINE_OWNS_PYTHON_ENV:-0}}" = "1" ] && \\
+            command -v deactivate >/dev/null 2>&1; then
+            deactivate
+        fi
+        PATH="${{_AI_PIPELINE_PREVIOUS_PATH:-$PATH}}"
+        if [ -n "${{_AI_PIPELINE_PREVIOUS_PROJECT_ROOT:-}}" ]; then
+            AI_PIPELINE_PROJECT_ROOT="$_AI_PIPELINE_PREVIOUS_PROJECT_ROOT"
+            export AI_PIPELINE_PROJECT_ROOT
+        else
+            unset AI_PIPELINE_PROJECT_ROOT
+        fi
+        export PATH
+        unset _AI_PIPELINE_ACTIVATED_ROOT
+        unset _AI_PIPELINE_PREVIOUS_PATH
+        unset _AI_PIPELINE_PREVIOUS_PROJECT_ROOT
+        unset _AI_PIPELINE_PREVIOUS_VIRTUAL_ENV
+        unset _AI_PIPELINE_OWNS_PYTHON_ENV
+        unset -f ai-pipeline
+        unset -f electroboy
+        return 0
+    fi
+    command ai-pipeline --root "$AI_PIPELINE_PROJECT_ROOT" "$@"
+}}
+
+electroboy() {{
+    ai-pipeline "$@"
+}}
+
+ai-pipeline status
+"""
+
+
+def _module_search_path() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _project_entrypoint_script() -> str:
+    return f"""#!/usr/bin/env sh
+set -eu
+
+if [ -n "${{AI_PIPELINE_PROJECT_ROOT:-}}" ]; then
+    PROJECT_ROOT="$AI_PIPELINE_PROJECT_ROOT"
+else
+    SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+fi
+
+RUNTIME_SRC="$PROJECT_ROOT/.agent-pipeline/local/runtime/src"
+if [ -d "$RUNTIME_SRC/ai_pipeline" ]; then
+    PYTHONPATH="$RUNTIME_SRC${{PYTHONPATH:+:$PYTHONPATH}}"
+    export PYTHONPATH
+fi
+
+exec python3 -m ai_pipeline --root "$PROJECT_ROOT" "$@"
+"""
 
 
 def _format_run_summary(store: StateStore, engine: GateEngine) -> str:

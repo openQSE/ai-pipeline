@@ -25,6 +25,7 @@ class PipelineConfig:
     default_runtime: str
     runtimes: dict[str, RuntimeConfig] = field(default_factory=dict)
     roles: dict[str, str] = field(default_factory=dict)
+    environment: dict[str, str] = field(default_factory=dict)
 
     def runtime_for_role(self, role: str) -> RuntimeConfig:
         runtime_name = self.roles.get(role, self.default_runtime)
@@ -69,10 +70,16 @@ DEFAULT_CONFIG = PipelineConfig(
 
 
 def load_pipeline_config(root: Path | str = ".") -> PipelineConfig:
-    """Load `agent-pipeline.toml` or return the default config."""
+    """Load project runtime configuration or return the default config."""
 
-    path = Path(root) / "agent-pipeline.toml"
-    if not path.exists():
+    root_path = Path(root)
+    project_path = root_path / ".agent-pipeline" / "project.toml"
+    legacy_path = root_path / "agent-pipeline.toml"
+    if project_path.exists():
+        path = project_path
+    elif legacy_path.exists():
+        path = legacy_path
+    else:
         return DEFAULT_CONFIG
     return parse_pipeline_config(path.read_text(encoding="utf-8"))
 
@@ -83,6 +90,7 @@ def parse_pipeline_config(text: str) -> PipelineConfig:
     default_runtime = DEFAULT_CONFIG.default_runtime
     runtimes: dict[str, RuntimeConfig] = dict(DEFAULT_CONFIG.runtimes)
     roles: dict[str, str] = {}
+    environment: dict[str, str] = {}
     section: str | None = None
     runtime_name: str | None = None
     runtime_data: dict[str, dict[str, object]] = {}
@@ -106,6 +114,8 @@ def parse_pipeline_config(text: str) -> PipelineConfig:
             default_runtime = str(parsed)
         elif section == "roles":
             roles[key] = str(parsed)
+        elif section == "environment":
+            environment[key] = str(parsed).lower() if isinstance(parsed, bool) else str(parsed)
         elif section and section.startswith("runtimes.") and runtime_name:
             runtime_data.setdefault(runtime_name, {})[key] = parsed
         else:
@@ -136,10 +146,14 @@ def parse_pipeline_config(text: str) -> PipelineConfig:
 
     if default_runtime not in runtimes:
         raise ConfigError(f"unknown default runtime: {default_runtime}")
-    return PipelineConfig(default_runtime, runtimes, roles)
+    return PipelineConfig(default_runtime, runtimes, roles, environment)
 
 
 def _parse_value(value: str) -> object:
+    if value == "true":
+        return True
+    if value == "false":
+        return False
     if value.startswith('"') and value.endswith('"'):
         return value[1:-1]
     if value.startswith("[") and value.endswith("]"):
