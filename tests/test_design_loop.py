@@ -38,7 +38,9 @@ class DesignLoopTests(unittest.TestCase):
                 ]
             )
 
-            run_dir = next((root / ".agent-pipeline" / "runs").iterdir())
+            run_dir = next(
+                (root / ".agent-pipeline" / "shared" / "runs").iterdir()
+            )
             snapshot = run_dir / "artifacts" / "docs" / "requirements.md"
             self.assertEqual(code, 0, stderr)
             self.assertTrue(snapshot.exists())

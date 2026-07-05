@@ -61,6 +61,12 @@ class StateStoreTests(unittest.TestCase):
             decisions = store.read_decisions()
             message = path.read_text(encoding="utf-8")
             raw_text = raw_path.read_text(encoding="utf-8")
+            decisions_path = (
+                Path(tmp) / ".agent-pipeline" / "shared" / "decisions.jsonl"
+            )
+
+            self.assertTrue(decisions_path.exists())
+            self.assertIn(".agent-pipeline/local/raw/run-1", str(raw_path.parent))
 
         self.assertEqual(decisions[0]["decision_id"], "DEC-1")
         self.assertIn("OPENAI_API_KEY=<redacted>", message)

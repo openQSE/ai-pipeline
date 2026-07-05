@@ -48,7 +48,9 @@ class ProjectEnvironmentTests(unittest.TestCase):
                 ).exists()
             )
             self.assertTrue((root / ".agent-pipeline" / "project.toml").exists())
-            self.assertTrue((root / ".agent-pipeline" / "current-run").exists())
+            self.assertTrue(
+                (root / ".agent-pipeline" / "shared" / "current-run").exists()
+            )
             self.assertTrue((root / "docs" / "requirements.md").exists())
             self.assertIn(
                 ".agent-pipeline/local/",

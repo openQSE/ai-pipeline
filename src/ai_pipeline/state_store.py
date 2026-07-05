@@ -32,20 +32,23 @@ class StateStore:
     def __init__(self, root: Path | str = ".") -> None:
         self.root = Path(root).resolve()
         self.state_dir = self.root / ".agent-pipeline"
-        self.runs_dir = self.state_dir / "runs"
-        self.current_run_file = self.state_dir / "current-run"
+        self.shared_dir = self.state_dir / "shared"
+        self.local_dir = self.state_dir / "local"
+        self.runs_dir = self.shared_dir / "runs"
+        self.current_run_file = self.shared_dir / "current-run"
 
     def init_run(self, run_id: str | None = None, force: bool = False) -> RunManifest:
-        if self.current_run_file.exists() and not force:
+        if self.current_run_id() and not force:
             raise StateError("pipeline run already exists; use --force to replace it")
 
         self.runs_dir.mkdir(parents=True, exist_ok=True)
+        self.local_dir.mkdir(parents=True, exist_ok=True)
         run_id = run_id or self._new_run_id()
         run_dir = self.run_dir(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "artifacts").mkdir(exist_ok=True)
         (run_dir / "messages").mkdir(exist_ok=True)
-        (run_dir / "raw").mkdir(exist_ok=True)
+        (self.local_dir / "raw" / run_id).mkdir(parents=True, exist_ok=True)
 
         manifest = RunManifest(run_id=run_id)
         self.save_manifest(manifest)
@@ -67,13 +70,40 @@ class StateStore:
         return self.load_manifest(run_id)
 
     def current_run_id(self) -> str | None:
-        if not self.current_run_file.exists():
-            return None
-        run_id = self.current_run_file.read_text(encoding="utf-8").strip()
+        current_run_file = self.current_run_file
+        if not current_run_file.exists():
+            legacy_file = self.state_dir / "current-run"
+            if legacy_file.exists():
+                current_run_file = legacy_file
+            else:
+                return None
+        run_id = current_run_file.read_text(encoding="utf-8").strip()
         return run_id or None
 
+    def _legacy_run_dir(self, run_id: str) -> Path:
+        return self.state_dir / "runs" / run_id
+
+    def _resolve_run_dir(self, run_id: str) -> Path:
+        run_dir = self.run_dir(run_id)
+        if run_dir.exists():
+            return run_dir
+        legacy_run_dir = self._legacy_run_dir(run_id)
+        if legacy_run_dir.exists():
+            return legacy_run_dir
+        return run_dir
+
+    def _shared_path(self, relative_path: str) -> Path:
+        path = self.shared_dir / relative_path
+        legacy_path = self.state_dir / relative_path
+        if path.exists() or not legacy_path.exists():
+            return path
+        return legacy_path
+
+    def _writable_shared_path(self, relative_path: str) -> Path:
+        return self.shared_dir / relative_path
+
     def load_manifest(self, run_id: str) -> RunManifest:
-        path = self.run_dir(run_id) / "manifest.json"
+        path = self._resolve_run_dir(run_id) / "manifest.json"
         if not path.exists():
             raise StateError(f"manifest not found for run {run_id}")
         return RunManifest.from_dict(json.loads(path.read_text(encoding="utf-8")))
@@ -93,7 +123,8 @@ class StateStore:
 
     def read_activity(self) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
-        return self.read_jsonl(self.run_dir(manifest.run_id) / "activity-log.jsonl")
+        path = self._resolve_run_dir(manifest.run_id) / "activity-log.jsonl"
+        return self.read_jsonl(path)
 
     def append_change_request(self, data: ChangeRequest | dict[str, object]) -> None:
         manifest = self.load_current_manifest()
@@ -109,7 +140,7 @@ class StateStore:
 
     def read_baseline_invalidations(self) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
-        path = self.run_dir(manifest.run_id) / "baseline-invalidations.jsonl"
+        path = self._resolve_run_dir(manifest.run_id) / "baseline-invalidations.jsonl"
         return self.read_jsonl(path)
 
     def append_artifact_snapshot(self, snapshot: ArtifactSnapshot) -> None:
@@ -119,7 +150,7 @@ class StateStore:
 
     def read_artifact_snapshots(self) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
-        path = self.run_dir(manifest.run_id) / "artifact-snapshots.jsonl"
+        path = self._resolve_run_dir(manifest.run_id) / "artifact-snapshots.jsonl"
         return self.read_jsonl(path)
 
     def append_review_issue(self, file_name: str, issue: ReviewIssue) -> None:
@@ -128,7 +159,7 @@ class StateStore:
 
     def read_review_issues(self, file_name: str) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
-        records = self.read_jsonl(self.run_dir(manifest.run_id) / file_name)
+        records = self.read_jsonl(self._resolve_run_dir(manifest.run_id) / file_name)
         latest: dict[str, dict[str, object]] = {}
         order: list[str] = []
         for record in records:
@@ -142,7 +173,7 @@ class StateStore:
 
     def read_review_issue_history(self, file_name: str) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
-        return self.read_jsonl(self.run_dir(manifest.run_id) / file_name)
+        return self.read_jsonl(self._resolve_run_dir(manifest.run_id) / file_name)
 
     def replace_review_issues(
         self,
@@ -159,10 +190,10 @@ class StateStore:
         path.write_text(text, encoding="utf-8")
 
     def append_decision(self, decision: DecisionRecord) -> None:
-        self.append_jsonl(self.state_dir / "decisions.jsonl", decision)
+        self.append_jsonl(self._writable_shared_path("decisions.jsonl"), decision)
 
     def read_decisions(self) -> list[dict[str, object]]:
-        return self.read_jsonl(self.state_dir / "decisions.jsonl")
+        return self.read_jsonl(self._shared_path("decisions.jsonl"))
 
     def append_approval(self, approval: ApprovalRecord) -> None:
         manifest = self.load_current_manifest()
@@ -171,18 +202,21 @@ class StateStore:
 
     def read_approvals(self) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
-        path = self.run_dir(manifest.run_id) / "approvals.jsonl"
+        path = self._resolve_run_dir(manifest.run_id) / "approvals.jsonl"
         return self.read_jsonl(path)
 
     def load_phase_status(self) -> PhaseStatus:
-        path = self.state_dir / "phase-status.json"
+        path = self._shared_path("phase-status.json")
         if not path.exists():
             return PhaseStatus()
         return PhaseStatus.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
     def save_phase_status(self, phase_status: PhaseStatus) -> None:
         phase_status.updated_at = utc_now()
-        self._write_json(self.state_dir / "phase-status.json", phase_status.to_dict())
+        self._write_json(
+            self._writable_shared_path("phase-status.json"),
+            phase_status.to_dict(),
+        )
 
     def write_message(self, event_id: str, content: str) -> Path:
         manifest = self.load_current_manifest()
@@ -193,7 +227,7 @@ class StateStore:
 
     def write_raw_event(self, event_id: str, content: object) -> Path:
         manifest = self.load_current_manifest()
-        path = self.run_dir(manifest.run_id) / "raw" / f"{event_id}.jsonl"
+        path = self.local_dir / "raw" / manifest.run_id / f"{event_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, str):
             text = redact_value(content)
@@ -204,7 +238,7 @@ class StateStore:
 
     def read_change_requests(self) -> list[dict[str, object]]:
         manifest = self.load_current_manifest()
-        path = self.run_dir(manifest.run_id) / "change-requests.jsonl"
+        path = self._resolve_run_dir(manifest.run_id) / "change-requests.jsonl"
         records = self.read_jsonl(path)
         latest: dict[str, dict[str, object]] = {}
         order: list[str] = []
