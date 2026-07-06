@@ -16,6 +16,32 @@ the creative requirements and design work interactive, then enforces the
 engineering discipline around when implementation can start and how review
 loops are recorded.
 
+## Installation
+
+Python 3.10 or newer is required. The package declares Rich for automatic
+pipeline progress output.
+
+Standard installation:
+
+```bash
+python -m pip install .
+electroboy --help
+```
+
+Editable installation:
+
+```bash
+python -m pip install -e .
+electroboy --help
+```
+
+Run directly from a checkout:
+
+```bash
+./electroboy --help
+./electroboy new /tmp/example-pipeline-project
+```
+
 ## Workflow
 
 Create a pipeline project and enter its project environment:
@@ -102,6 +128,16 @@ electroboy phase commit <phase> --sha <commit-sha>
 `code --phased` preserves the one-phase checkpoint workflow. It runs the active
 phase agents and leaves commit creation or commit recording to the operator.
 
+Expert users can force the active stage when adopting or repairing an existing
+project:
+
+```bash
+electroboy stage implementation --force --reason "Adopting existing project"
+```
+
+This records a decision and activity event, but it does not mark skipped gates
+as complete.
+
 Resume an interrupted run from the same project:
 
 ```bash
@@ -181,10 +217,11 @@ Implemented capabilities:
 - Artifact snapshots, approval records, decisions, review issues, change
   requests, baseline invalidations, and activity events.
 - Append-only issue lifecycle transitions.
-- Phase start, review, test review, drift, and commit commands.
+- Automated phase start, review, test review, drift, and commit recording, plus
+  manual `phase commit` for phased mode.
 - Final validation and documentation review gates.
-- Change-control classify, approve, and reopen behavior.
-- Public stage commands that reopen earlier baselines with `--reason`.
+- Public workflow commands that reopen earlier baselines with `--reason`.
+- Expert forced stage movement with `electroboy stage <stage> --force`.
 - Summary and trace reports.
 - Rich-compatible progress output for automatic implementation commands, with
   plain text fallback when Rich is unavailable.
@@ -202,98 +239,13 @@ Extension points:
 - Documentation review has deterministic checks and can also consume
   documentation-agent issue records.
 
-## Install For Development
-
-Python 3.10 or newer is required. The prototype has no third-party runtime
-dependencies. The target workflow adds Rich for automatic pipeline progress
-output.
-
-Run directly from a checkout:
-
-```bash
-./electroboy --help
-./electroboy new /tmp/example-pipeline-project
-```
-
-Or install in editable mode:
-
-```bash
-python -m pip install -e .
-electroboy --help
-```
-
-## Basic Usage
-
-Create or enter a project:
-
-```bash
-./electroboy new path/to/project
-source path/to/project/bin/activate
-```
-
-Show the current stage, blocked gate, and next command:
-
-```bash
-electroboy status
-```
-
-Interactive authoring commands:
-
-```bash
-electroboy requirements
-electroboy design
-electroboy implementation-plan
-```
-
-Approval commands:
-
-```bash
-electroboy requirements-approve
-electroboy design-approve
-electroboy plan-approve
-electroboy code-approve
-```
-
-Automated commands:
-
-```bash
-electroboy design-review
-electroboy code
-electroboy validate
-electroboy document
-```
-
-`requirements`, `design`, and `implementation-plan` start the configured
-Design Author Agent with the right artifact context. The session can end and
-be restarted. The next invocation rebuilds context from repository artifacts,
-shared pipeline state, decisions, review issues, and activity events.
-
-Before `electroboy code`, commit the approved pre-implementation baseline:
-
-```bash
-git status --short
-git add .
-git commit -m "project: approve implementation baseline"
-```
-
-`code` resumes from the last durable checkpoint. By default, it implements,
-reviews, tests, commits, and records every remaining planned phase. After all
-phase commits are recorded, validation testing runs before the documentation
-finesse pass.
-`document` completes documentation review before `code-approve` can pass.
-If `document` reports existing documentation issues, resolve or transition
-those issue records before running `document` again.
-
-`code --phased` is available when the operator wants the older one-phase
-checkpoint workflow. In that mode, `phase commit` records a reviewed git
-commit for the active phase before the next `code --phased` run starts.
-
 ## Flow Enforcement
 
 The CLI records one active stage in
 `.electroboy/shared/runs/<run-id>/manifest.json`. Mutating commands must
 match that active stage, move backward through change control, or pass
-predecessor gates.
+predecessor gates, unless an expert operator uses the explicit forced stage
+override.
 
 For example, this fails immediately after `new`:
 
@@ -330,6 +282,8 @@ electroboy document --reason "Improve API examples"
 
 The orchestrator records a change-control event, asks for approval when
 downstream gates would be invalidated, and resumes from the reopened stage.
+Use `electroboy stage <stage> --force --reason <text>` only when an expert
+operator needs to override the active stage directly.
 
 ## Agent Runtime Configuration
 

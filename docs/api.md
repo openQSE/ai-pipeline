@@ -20,26 +20,16 @@ Operator workflow commands:
 - `implementation-plan [--reason <text>]` starts or resumes planning.
 - `plan-approve` records human and Design Author plan approval.
 - `code [--reason <text>] [--phased]` starts or resumes implementation work.
+- `phase commit <n> --sha <commit-sha>` records a reviewed phase commit after
+  `code --phased`.
+- `validate` runs final validation commands and writes a validation report.
 - `document [--reason <text>]` runs documentation review and refinement.
 - `code-approve` records final human completion approval.
 - `deactivate` leaves an activated project shell environment.
 - `report summary` writes or prints a run summary.
 - `report trace` writes or prints the activity trace.
-
-Lower-level commands:
-
-- `init` creates a run under `.electroboy/shared/`.
-- `resume` prints the state needed to continue an interrupted run.
-- `stage` completes the active pipeline stage when approvals and gates pass.
-- `gate` evaluates a deterministic gate and records the result.
-- `phase` manages phase start, review, test review, drift, and commit state.
-- `validate` runs final validation commands and writes a validation report.
-- `docs-review` verifies final documentation and snapshots passing docs.
-- `plan` checks or records implementation-plan updates.
-- `issues` records append-only review issue lifecycle events.
-- `agent` invokes the configured runtime for an agent role.
-- `artifacts` creates artifact templates and snapshots artifacts.
-- `change` manages change-control requests, approvals, and reopening.
+- `stage <stage> --force --reason <text>` forces the active stage for expert
+  recovery and existing-project adoption.
 
 Earlier operator workflow commands reopen baselines when `--reason` is
 provided and the requested stage is behind the active stage. The orchestrator
@@ -48,19 +38,18 @@ the reopened stage.
 
 ## Stage Commands
 
-Stage commands enforce the ordered pipeline.
+The normal workflow advances through stage-specific commands such as
+`requirements-approve`, `design-review`, `design-approve`, `plan-approve`,
+`code`, `validate`, and `document`.
+
+`stage` is an expert escape hatch for setting the active stage directly:
 
 ```bash
-electroboy stage requirements --human-approved --author-confirmed
-electroboy stage design --human-approved
-electroboy stage design-review
-electroboy stage design-acceptance --human-approved
-electroboy stage plan --human-approved --author-confirmed
-electroboy stage implementation
+electroboy stage implementation --force --reason "Adopting existing project"
 ```
 
-`requirements`, `design`, `design-acceptance`, and `plan` require explicit
-approval flags unless the approval records already exist for the run.
+The command records a decision and activity event, but it does not mark
+skipped gates as complete.
 
 ## Project Environment Commands
 
@@ -93,21 +82,14 @@ the implementation stage is complete.
 phase and leaves commit creation or commit recording to the operator.
 
 ```bash
-electroboy phase start <n>
-electroboy phase review <n> --pass
-electroboy phase test <n> --pass
-electroboy phase drift <n> --reason <text>
 electroboy phase commit <n> --sha <commit-sha>
 ```
 
-Only one implementation phase can be active. Review and test review commands
-must target the active phase. They record operator state and issue files, but
-they do not replace configured agent runtime evidence. `phase commit` verifies
-that code review and test review have runtime-backed agent events, verifies
-that the supplied SHA is an existing commit reachable from `HEAD`, verifies
-that the commit message identifies the phase and objective, checks changed
-paths against any `Paths:` metadata for the active phase, and stores it in
-phase status.
+`phase commit` verifies that code review and test review have runtime-backed
+agent events, verifies that the supplied SHA is an existing commit reachable
+from `HEAD`, verifies that the commit message identifies the phase and
+objective, checks changed paths against any `Paths:` metadata for the active
+phase, and stores it in phase status.
 
 ## Validation Commands
 
@@ -139,32 +121,6 @@ electroboy code-approve
 `document` wraps the final documentation review gate. It requires validation
 testing to pass before it can complete. `code-approve` requires the
 documentation gate to pass before it records final human completion approval.
-
-## Change Control Commands
-
-```bash
-electroboy change open --baseline requirements --reason <text>
-electroboy change classify CR-0001 --baseline requirements
-electroboy change approve CR-0001 --human-approved
-electroboy change reopen CR-0001
-electroboy change status
-```
-
-`reopen` requires a classified and human-approved request. It invalidates
-downstream gates and records affected artifact snapshot refs.
-
-## Issue Commands
-
-```bash
-electroboy issues add <file> --id <id> --source <agent> \
-  --severity major --summary <text>
-electroboy issues transition <file> <id> --status fixed
-electroboy issues resolve <file> <id>
-electroboy issues list <file>
-```
-
-Review issue files are append-only JSONL logs. Reads collapse lifecycle events
-to the latest state for each issue id.
 
 ## Runtime Configuration
 

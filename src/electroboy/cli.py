@@ -30,6 +30,7 @@ from .models import (
     GATE_STAGE_ORDER,
     GATE_VALIDATION_TESTING,
     NEXT_STAGE,
+    STAGES,
     PhaseStatus,
     ReviewIssue,
     STAGE_COMPLETE,
@@ -107,15 +108,6 @@ DOCUMENTATION_REVIEW_FILES = [
     "docs/api.md",
 ]
 
-CHANGE_BASELINE_STAGES = {
-    "requirements": STAGE_REQUIREMENTS,
-    "design": STAGE_DESIGN,
-    "plan": STAGE_PLAN,
-    "implementation": STAGE_IMPLEMENTATION,
-    "validation": STAGE_VALIDATION,
-    "documentation": STAGE_DOCS_REVIEW,
-}
-
 CHANGE_BASELINE_INVALIDATED_GATES = {
     "requirements": [
         GATE_REQUIREMENTS,
@@ -165,12 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--run-id", help="explicit run id for deterministic tests")
     new.add_argument("--force", action="store_true", help="replace current run")
 
-    init = subparsers.add_parser("init", help="initialize a pipeline run")
-    init.add_argument("--run-id", help="explicit run id for deterministic tests")
-    init.add_argument("--force", action="store_true", help="replace current run")
-
     subparsers.add_parser("status", help="show current pipeline status")
-    subparsers.add_parser("resume", help="show the stage to resume")
     subparsers.add_parser("deactivate", help="leave an activated pipeline project")
 
     requirements = subparsers.add_parser(
@@ -216,43 +203,23 @@ def build_parser() -> argparse.ArgumentParser:
     report_trace = report_subparsers.add_parser("trace", help="show activity trace")
     report_trace.add_argument("--output", help="write report to this path")
 
-    stage = subparsers.add_parser("stage", help="complete the active stage")
+    stage = subparsers.add_parser("stage", help="force the active stage")
     stage.add_argument(
         "stage",
-        choices=[
-            STAGE_REQUIREMENTS,
-            STAGE_DESIGN,
-            STAGE_DESIGN_REVIEW,
-            STAGE_DESIGN_ACCEPTANCE,
-            STAGE_PLAN,
-            STAGE_IMPLEMENTATION,
-        ],
+        choices=STAGES,
     )
-    stage.add_argument("--human-approved", action="store_true")
-    stage.add_argument("--author-confirmed", action="store_true")
+    stage.add_argument(
+        "--force",
+        action="store_true",
+        help="required to set the active stage directly",
+    )
+    stage.add_argument("--reason", help="reason for forcing the active stage")
 
-    gate = subparsers.add_parser("gate", help="evaluate a named gate")
-    gate.add_argument("gate")
-
-    phase = subparsers.add_parser("phase", help="manage implementation phases")
+    phase = subparsers.add_parser("phase", help="record manual phase commits")
     phase_subparsers = phase.add_subparsers(dest="phase_command", required=True)
-    phase_start = phase_subparsers.add_parser("start", help="start a phase")
-    phase_start.add_argument("phase", type=int)
-    phase_start.add_argument("--objective", default="")
-    phase_review = phase_subparsers.add_parser("review", help="mark code review")
-    phase_review.add_argument("phase", type=int)
-    phase_review.add_argument("--pass", dest="passed", action="store_true")
-    phase_test = phase_subparsers.add_parser("test", help="mark phase test review")
-    phase_test.add_argument("phase", type=int)
-    phase_test.add_argument("--pass", dest="passed", action="store_true")
     phase_commit = phase_subparsers.add_parser("commit", help="record phase commit")
     phase_commit.add_argument("phase", type=int)
     phase_commit.add_argument("--sha", default="")
-    phase_drift = phase_subparsers.add_parser("drift", help="record plan drift")
-    phase_drift.add_argument("phase", type=int)
-    phase_drift.add_argument("--reason", required=True)
-
-    subparsers.add_parser("docs-review", help="run final documentation review")
 
     validate = subparsers.add_parser("validate", help="run validation testing")
     validate.add_argument(
@@ -270,91 +237,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit shell validation command; may be provided more than once",
     )
 
-    plan = subparsers.add_parser("plan", help="manage implementation plan")
-    plan_subparsers = plan.add_subparsers(dest="plan_command", required=True)
-    plan_subparsers.add_parser("check", help="check plan traceability")
-    plan_update = plan_subparsers.add_parser("update", help="record plan update")
-    plan_update.add_argument("--reason", required=True)
-
-    issues = subparsers.add_parser("issues", help="manage review issues")
-    issue_subparsers = issues.add_subparsers(dest="issue_command", required=True)
-    issue_add = issue_subparsers.add_parser("add", help="add a review issue")
-    issue_add.add_argument("file")
-    issue_add.add_argument("--id", required=True)
-    issue_add.add_argument("--source", required=True)
-    issue_add.add_argument("--severity", required=True)
-    issue_add.add_argument("--summary", required=True)
-    issue_add.add_argument("--phase", type=int)
-    issue_add.add_argument("--owner")
-    issue_add.add_argument("--artifact")
-    issue_add.add_argument("--location")
-    issue_add.add_argument("--rationale")
-    issue_add.add_argument("--requested-change")
-    issue_subparsers.add_parser("list", help="list review issues").add_argument("file")
-    issue_resolve = issue_subparsers.add_parser("resolve", help="resolve issue")
-    issue_resolve.add_argument("file")
-    issue_resolve.add_argument("id")
-    issue_transition = issue_subparsers.add_parser(
-        "transition",
-        help="append an issue lifecycle transition",
-    )
-    issue_transition.add_argument("file")
-    issue_transition.add_argument("id")
-    issue_transition.add_argument(
-        "--status",
-        choices=["open", "accepted", "fixed", "verified", "rejected", "deferred", "escalated"],
-        required=True,
-    )
-    issue_transition.add_argument("--response")
-    issue_transition.add_argument("--verification")
-
-    agent = subparsers.add_parser("agent", help="invoke configured agent runtimes")
-    agent_subparsers = agent.add_subparsers(dest="agent_command", required=True)
-    agent_run = agent_subparsers.add_parser("run", help="run an agent role")
-    agent_run.add_argument("role")
-    agent_run.add_argument("--prompt", required=True)
-    agent_run.add_argument("--context", action="append", default=[])
-
-    artifacts = subparsers.add_parser("artifacts", help="manage artifacts")
-    artifact_subparsers = artifacts.add_subparsers(
-        dest="artifact_command",
-        required=True,
-    )
-    artifact_init = artifact_subparsers.add_parser(
-        "init",
-        help="create missing artifact templates",
-    )
-    artifact_init.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="overwrite existing artifact files",
-    )
-    snapshot = artifact_subparsers.add_parser(
-        "snapshot",
-        help="snapshot one artifact or all artifacts",
-    )
-    snapshot.add_argument("path", nargs="?", help="artifact path to snapshot")
-    snapshot.add_argument("--all", action="store_true", help="snapshot all artifacts")
-
-    change = subparsers.add_parser("change", help="manage change-control state")
-    change_subparsers = change.add_subparsers(dest="change_command", required=True)
-    change_subparsers.add_parser("status", help="list change-control requests")
-    change_open = change_subparsers.add_parser("open", help="open a request")
-    change_open.add_argument(
-        "--baseline",
-        choices=list(CHANGE_BASELINE_STAGES),
-        required=True,
-    )
-    change_open.add_argument("--reason", required=True)
-    change_classify = change_subparsers.add_parser("classify", help="classify request")
-    change_classify.add_argument("id")
-    change_classify.add_argument("--baseline", choices=list(CHANGE_BASELINE_STAGES))
-    change_approve = change_subparsers.add_parser("approve", help="approve reopen")
-    change_approve.add_argument("id")
-    change_approve.add_argument("--human-approved", action="store_true", required=True)
-    change_reopen = change_subparsers.add_parser("reopen", help="reopen request")
-    change_reopen.add_argument("id")
-
     return parser
 
 
@@ -367,12 +249,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "new":
             return _cmd_new(args)
-        if args.command == "init":
-            return _cmd_init(store, args)
         if args.command == "status":
             return _cmd_status(store, engine)
-        if args.command == "resume":
-            return _cmd_resume(store, engine)
         if args.command == "deactivate":
             return _cmd_deactivate(store)
         if args.command == "requirements":
@@ -410,25 +288,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "report":
             return _cmd_report(store, engine, args)
         if args.command == "stage":
-            return _cmd_stage(store, engine, args)
-        if args.command == "gate":
-            return _cmd_gate(store, engine, args.gate)
+            return _cmd_set_stage(store, args)
         if args.command == "phase":
             return _cmd_phase(store, engine, args)
-        if args.command == "docs-review":
-            return _cmd_docs_review(store, engine)
         if args.command == "validate":
             return _cmd_validate(store, args)
-        if args.command == "plan":
-            return _cmd_plan(store, args)
-        if args.command == "issues":
-            return _cmd_issues(store, args)
-        if args.command == "agent":
-            return _cmd_agent(store, args)
-        if args.command == "artifacts":
-            return _cmd_artifacts(store, args)
-        if args.command == "change":
-            return _cmd_change(store, args)
     except StateError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
@@ -459,13 +323,6 @@ def _cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_init(store: StateStore, args: argparse.Namespace) -> int:
-    manifest = store.init_run(run_id=args.run_id, force=args.force)
-    print(f"created run: {manifest.run_id}")
-    print(f"active stage: {manifest.active_stage}")
-    return 0
-
-
 def _cmd_status(store: StateStore, engine: GateEngine) -> int:
     manifest = store.load_current_manifest()
     print(f"run id: {manifest.run_id}")
@@ -485,18 +342,6 @@ def _cmd_status(store: StateStore, engine: GateEngine) -> int:
     _print_count("open review issues", _open_review_issues(store))
     blocked = _blocked_gate_lines(store, engine)
     _print_list("blocked gates", blocked)
-    return 0
-
-
-def _cmd_resume(store: StateStore, engine: GateEngine) -> int:
-    manifest = store.load_current_manifest()
-    print(f"resume stage: {manifest.active_stage}")
-    phase_status = store.load_phase_status()
-    if phase_status.active_phase is not None:
-        print(f"resume phase: {phase_status.active_phase}")
-    _print_count("open change requests", _open_change_requests(store))
-    _print_count("open review issues", _open_review_issues(store))
-    _print_list("blocked gates", _blocked_gate_lines(store, engine))
     return 0
 
 
@@ -1075,6 +920,47 @@ def _cmd_report(
     return 2
 
 
+def _cmd_set_stage(store: StateStore, args: argparse.Namespace) -> int:
+    if not args.force:
+        raise StateError("stage changes require --force")
+    reason = (args.reason or "").strip()
+    if not reason:
+        raise StateError("stage changes require --reason")
+
+    manifest = store.load_current_manifest()
+    previous_stage = manifest.active_stage
+    manifest.set_active_stage(args.stage)
+    store.save_manifest(manifest)
+
+    decision_id = f"STAGE-{len(store.read_decisions()) + 1:04d}"
+    store.append_decision(
+        DecisionRecord(
+            decision_id=decision_id,
+            stage=args.stage,
+            summary=f"Forced active stage from {previous_stage} to {args.stage}",
+            rationale=reason,
+        )
+    )
+    store.append_activity(
+        ActivityEvent(
+            actor="human-operator",
+            stage=args.stage,
+            action="forced-stage-change",
+            summary=f"Forced active stage from {previous_stage} to {args.stage}.",
+            inputs=[reason],
+            outputs=[
+                f".electroboy/shared/runs/{manifest.run_id}/manifest.json",
+                "decisions.jsonl",
+            ],
+        )
+    )
+
+    print(f"previous stage: {previous_stage}")
+    print(f"active stage: {manifest.active_stage}")
+    print(f"decision: {decision_id}")
+    return 0
+
+
 def _cmd_stage(
     store: StateStore,
     engine: GateEngine,
@@ -1161,173 +1047,11 @@ def _cmd_stage(
     return 0
 
 
-def _cmd_gate(store: StateStore, engine: GateEngine, gate: str) -> int:
-    manifest = store.load_current_manifest()
-    result = engine.evaluate(gate, manifest)
-    store.append_activity(
-        ActivityEvent(
-            actor="orchestrator",
-            stage=manifest.active_stage,
-            gate=gate,
-            action="gate-evaluated",
-            status=result.status,
-            summary="; ".join(result.messages) or f"Gate {gate} passed.",
-        )
-    )
-    print(f"{result.name}: {result.status}")
-    for message in result.messages:
-        print(f"  - {message}")
-    return 0 if result.passed else 1
-
-
-def _cmd_plan(store: StateStore, args: argparse.Namespace) -> int:
-    if args.plan_command == "check":
-        if _plan_has_traceability(store.root):
-            print("implementation plan traceability: pass")
-            return 0
-        print("implementation plan traceability: blocked")
-        return 1
-
-    if args.plan_command == "update":
-        manifest = store.load_current_manifest()
-        phase_status = store.load_phase_status()
-        if phase_status.active_phase is not None:
-            phase = phase_status.phases.setdefault(str(phase_status.active_phase), {})
-            phase["plan_current"] = True
-            store.save_phase_status(phase_status)
-        decision = DecisionRecord(
-            decision_id=f"PLAN-{len(store.read_decisions()) + 1:04d}",
-            stage=manifest.active_stage,
-            summary="Implementation plan updated",
-            rationale=args.reason,
-        )
-        store.append_decision(decision)
-        snapshot = ArtifactManager(store.root).snapshot(
-            manifest.run_id,
-            "docs/implementation-plan.md",
-            "plan-updated",
-        )
-        store.append_artifact_snapshot(snapshot)
-        store.append_activity(
-            ActivityEvent(
-                actor="orchestrator",
-                stage=manifest.active_stage,
-                action="plan-updated",
-                summary=f"{args.reason} Decision: {decision.decision_id}.",
-                artifact_snapshot_refs=[snapshot.snapshot_path],
-                outputs=[
-                    "docs/implementation-plan.md",
-                    "decisions.jsonl",
-                    snapshot.snapshot_path,
-                ],
-            )
-        )
-        print("recorded implementation plan update")
-        return 0
-
-    return 2
-
-
 def _cmd_phase(
     store: StateStore,
     engine: GateEngine,
     args: argparse.Namespace,
 ) -> int:
-    if args.phase_command == "start":
-        manifest = store.load_current_manifest()
-        if manifest.active_stage != STAGE_IMPLEMENTATION:
-            print("error: active stage is not implementation", file=sys.stderr)
-            return 1
-        if not manifest.has_gate(GATE_IMPLEMENTATION):
-            print("error: implementation gate has not passed", file=sys.stderr)
-            return 1
-        status = store.load_phase_status()
-        if status.active_phase is not None and status.active_phase != args.phase:
-            print("error: another phase is already active", file=sys.stderr)
-            return 1
-        status.active_phase = args.phase
-        phase = status.phases.setdefault(str(args.phase), {})
-        if phase.get("status") == "committed":
-            print("error: phase is already committed", file=sys.stderr)
-            return 1
-        phase.update(
-            {
-                "status": "active",
-                "objective": args.objective,
-                "plan_current": True,
-            }
-        )
-        store.save_phase_status(status)
-        store.append_activity(
-            ActivityEvent(
-                actor="coding-agent",
-                stage=manifest.active_stage,
-                phase=args.phase,
-                action="phase-started",
-                summary=f"Started implementation phase {args.phase}.",
-            )
-        )
-        print(f"started phase: {args.phase}")
-        return 0
-
-    if args.phase_command in {"review", "test"}:
-        manifest = store.load_current_manifest()
-        if manifest.active_stage != STAGE_IMPLEMENTATION:
-            print("error: active stage is not implementation", file=sys.stderr)
-            return 1
-        status = store.load_phase_status()
-        if status.active_phase != args.phase:
-            print("error: requested phase is not active", file=sys.stderr)
-            return 1
-        phase = status.phases.setdefault(str(args.phase), {})
-        key = "code_review" if args.phase_command == "review" else "test_review"
-        issue_file = (
-            f"phase-{args.phase}-code-review.jsonl"
-            if args.phase_command == "review"
-            else f"phase-{args.phase}-test-review.jsonl"
-        )
-        if args.passed and _blocking_issues(store, issue_file):
-            _print_gate_failure([f"blocking review issues remain in {issue_file}"])
-            return 1
-        phase[key] = "passed" if args.passed else "pending"
-        store.save_phase_status(status)
-        store.append_activity(
-            ActivityEvent(
-                actor="human-operator",
-                stage=manifest.active_stage,
-                phase=args.phase,
-                action=f"phase-{args.phase_command}",
-                status=phase[key],
-                summary=f"Recorded phase {args.phase} {key}: {phase[key]}.",
-                outputs=[issue_file],
-            )
-        )
-        print(f"phase {args.phase} {key}: {phase[key]}")
-        return 0
-
-    if args.phase_command == "drift":
-        manifest = store.load_current_manifest()
-        status = store.load_phase_status()
-        if status.active_phase != args.phase:
-            print("error: requested phase is not active", file=sys.stderr)
-            return 1
-        phase = status.phases.setdefault(str(args.phase), {})
-        phase["plan_current"] = False
-        phase["plan_drift_reason"] = args.reason
-        _clear_phase_review_evidence(phase)
-        store.save_phase_status(status)
-        store.append_activity(
-            ActivityEvent(
-                actor="orchestrator",
-                stage=manifest.active_stage,
-                phase=args.phase,
-                action="phase-plan-drift",
-                summary=args.reason,
-            )
-        )
-        print(f"phase {args.phase} plan drift recorded")
-        return 0
-
     if args.phase_command == "commit":
         manifest = store.load_current_manifest()
         status = store.load_phase_status()
@@ -1506,84 +1230,6 @@ def _cmd_docs_review(store: StateStore, engine: GateEngine) -> int:
     return 0
 
 
-def _cmd_issues(store: StateStore, args: argparse.Namespace) -> int:
-    if args.issue_command == "add":
-        issue = ReviewIssue(
-            issue_id=args.id,
-            source=args.source,
-            severity=args.severity,
-            status="open",
-            summary=args.summary,
-            phase=args.phase,
-            owner=args.owner,
-            artifact=args.artifact,
-            location=args.location,
-            rationale=args.rationale,
-            requested_change=args.requested_change,
-        )
-        store.append_review_issue(args.file, issue)
-        store.append_activity(
-            ActivityEvent(
-                actor=args.source,
-                action="issue-opened",
-                summary=args.summary,
-                phase=args.phase,
-                linked_issue_ids=[args.id],
-                outputs=[args.file],
-            )
-        )
-        print(f"added issue: {args.id}")
-        return 0
-
-    if args.issue_command == "list":
-        issues = store.read_review_issues(args.file)
-        print(f"issues: {len(issues)}")
-        for issue in issues:
-            print(f"  - {issue['issue_id']}: {issue['status']} {issue['summary']}")
-        return 0
-
-    if args.issue_command == "resolve":
-        if not _transition_issue(
-            store,
-            args.file,
-            args.id,
-            status="verified",
-            response=None,
-            verification="Resolved and verified by operator.",
-        ):
-            return 1
-        print(f"resolved issue: {args.id}")
-        return 0
-
-    if args.issue_command == "transition":
-        if not _transition_issue(
-            store,
-            args.file,
-            args.id,
-            status=args.status,
-            response=args.response,
-            verification=args.verification,
-        ):
-            return 1
-        print(f"transitioned issue: {args.id} -> {args.status}")
-        return 0
-
-    return 2
-
-
-def _cmd_agent(store: StateStore, args: argparse.Namespace) -> int:
-    if args.agent_command == "run":
-        result, _event_id, _issue_file = _invoke_agent_role(
-            store,
-            role=args.role,
-            prompt=args.prompt,
-            context_paths=list(args.context),
-        )
-        print(result.final_message, end="" if result.final_message.endswith("\n") else "\n")
-        return 0 if result.ok else 1
-    return 2
-
-
 def _invoke_agent_role(
     store: StateStore,
     role: str,
@@ -1629,213 +1275,6 @@ def _invoke_agent_role(
         )
     )
     return result, event_id, issue_file
-
-
-def _cmd_artifacts(store: StateStore, args: argparse.Namespace) -> int:
-    manager = ArtifactManager(store.root)
-    if args.artifact_command == "init":
-        written = manager.init_templates(overwrite=args.overwrite)
-        if written:
-            for path in written:
-                print(f"created artifact template: {path}")
-        else:
-            print("artifact templates already exist")
-        return 0
-
-    if args.artifact_command == "snapshot":
-        manifest = store.load_current_manifest()
-        event_id = f"snapshot-{len(manifest.completed_gates) + 1}"
-        if args.all:
-            snapshots = manager.snapshot_all(manifest.run_id, event_id)
-        elif args.path:
-            snapshots = [manager.snapshot(manifest.run_id, args.path, event_id)]
-        else:
-            print("error: provide an artifact path or --all", file=sys.stderr)
-            return 2
-        for snapshot in snapshots:
-            store.append_artifact_snapshot(snapshot)
-            store.append_activity(
-                ActivityEvent(
-                    actor="orchestrator",
-                    stage=manifest.active_stage,
-                    action="artifact-snapshotted",
-                    summary=f"Snapshotted {snapshot.artifact_path}.",
-                    artifact_snapshot_refs=[snapshot.snapshot_path],
-                    outputs=[snapshot.snapshot_path],
-                )
-            )
-            print(f"snapshot: {snapshot.artifact_path} -> {snapshot.snapshot_path}")
-        return 0
-
-    return 2
-
-
-def _cmd_change(store: StateStore, args: argparse.Namespace) -> int:
-    if args.change_command == "status":
-        requests = store.read_change_requests()
-        print(f"change requests: {len(requests)}")
-        for request in requests:
-            print(
-                f"  - {request['id']}: "
-                f"{request.get('status')} {request['baseline']}"
-            )
-        return 0
-
-    if args.change_command == "open":
-        manifest = store.load_current_manifest()
-        request = ChangeRequest(
-            request_id=f"CR-{len(store.read_change_requests()) + 1:04d}",
-            run_id=manifest.run_id,
-            baseline=args.baseline,
-            reason=args.reason,
-            status="open",
-            event="opened",
-        )
-        store.append_change_request(request)
-        store.append_activity(
-            ActivityEvent(
-                actor="orchestrator",
-                stage=manifest.active_stage,
-                action="change-request-opened",
-                summary=f"Opened change request {request.request_id}.",
-            )
-        )
-        print(f"opened change request: {request.request_id}")
-        return 0
-
-    if args.change_command == "classify":
-        request = _find_change_request(store, args.id)
-        if request is None:
-            print(f"error: change request not found: {args.id}", file=sys.stderr)
-            return 1
-        if request.get("status") not in {"open", "classified"}:
-            print("error: change request is not open", file=sys.stderr)
-            return 1
-        baseline = args.baseline or str(request.get("baseline"))
-        if baseline not in CHANGE_BASELINE_STAGES:
-            print(f"error: unknown baseline: {baseline}", file=sys.stderr)
-            return 1
-        update = dict(request)
-        update.update(
-            {
-                "baseline": baseline,
-                "status": "classified",
-                "event": "classified",
-                "updated_at": utc_now(),
-            }
-        )
-        store.append_change_request(update)
-        store.append_activity(
-            ActivityEvent(
-                actor="orchestrator",
-                stage=store.load_current_manifest().active_stage,
-                action="change-request-classified",
-                summary=f"Classified change request {args.id} as {baseline}.",
-            )
-        )
-        print(f"classified change request: {args.id}")
-        print(f"baseline: {baseline}")
-        return 0
-
-    if args.change_command == "approve":
-        request = _find_change_request(store, args.id)
-        if request is None:
-            print(f"error: change request not found: {args.id}", file=sys.stderr)
-            return 1
-        if request.get("status") != "classified":
-            print("error: change request is not classified", file=sys.stderr)
-            return 1
-        update = dict(request)
-        update.update(
-            {
-                "status": "classified",
-                "event": "approved",
-                "human_approved": True,
-                "updated_at": utc_now(),
-            }
-        )
-        store.append_change_request(update)
-        store.append_activity(
-            ActivityEvent(
-                actor="human-operator",
-                stage=store.load_current_manifest().active_stage,
-                action="change-request-approved",
-                summary=f"Approved change request {args.id} for reopen.",
-            )
-        )
-        print(f"approved change request: {args.id}")
-        return 0
-
-    if args.change_command == "reopen":
-        request = _find_change_request(store, args.id)
-        if request is None:
-            print(f"error: change request not found: {args.id}", file=sys.stderr)
-            return 1
-        if request.get("status") != "classified":
-            print("error: change request is not classified", file=sys.stderr)
-            return 1
-        if not request.get("human_approved"):
-            print("error: change request is not human approved", file=sys.stderr)
-            return 1
-
-        baseline = str(request.get("baseline"))
-        if baseline not in CHANGE_BASELINE_STAGES:
-            print(f"error: unknown baseline: {baseline}", file=sys.stderr)
-            return 1
-        manifest = store.load_current_manifest()
-        invalidated = CHANGE_BASELINE_INVALIDATED_GATES[baseline]
-        for gate in invalidated:
-            if gate not in manifest.invalidated_gates:
-                manifest.invalidated_gates.append(gate)
-        reopened_stage = CHANGE_BASELINE_STAGES[baseline]
-        manifest.set_active_stage(reopened_stage)
-        store.save_manifest(manifest)
-        invalidated_snapshots = _invalidated_snapshot_refs(store, invalidated)
-        invalidation = BaselineInvalidation(
-            invalidation_id=f"INV-{len(store.read_baseline_invalidations()) + 1:04d}",
-            change_request_id=args.id,
-            baseline=baseline,
-            invalidated_gates=list(invalidated),
-            invalidated_snapshot_refs=invalidated_snapshots,
-        )
-        store.append_baseline_invalidation(invalidation)
-
-        update = dict(request)
-        update.update(
-            {
-                "status": "reopened",
-                "event": "reopened",
-                "updated_at": utc_now(),
-                "reopened_stage": reopened_stage,
-                "invalidated_gates": list(invalidated),
-            }
-        )
-        store.append_change_request(update)
-        store.append_decision(
-            DecisionRecord(
-                decision_id=f"CHANGE-{len(store.read_decisions()) + 1:04d}",
-                stage=reopened_stage,
-                summary=f"Reopened {baseline} baseline",
-                rationale=str(request.get("reason", "")),
-            )
-        )
-        store.append_activity(
-            ActivityEvent(
-                actor="orchestrator",
-                stage=reopened_stage,
-                action="change-request-reopened",
-                summary=f"Reopened change request {args.id} at {baseline}.",
-                outputs=["baseline-invalidations.jsonl"],
-            )
-        )
-        print(f"reopened change request: {args.id}")
-        print(f"active stage: {manifest.active_stage}")
-        print("invalidated gates:")
-        for gate in invalidated:
-            print(f"  - {gate}")
-        return 0
-
-    return 2
 
 
 def _init_git_repository(project_root: Path) -> None:
@@ -2533,16 +1972,6 @@ def _top_level_cli_commands() -> list[str]:
     return []
 
 
-def _find_change_request(
-    store: StateStore,
-    request_id: str,
-) -> dict[str, object] | None:
-    for request in store.read_change_requests():
-        if request.get("id") == request_id:
-            return request
-    return None
-
-
 def _validation_commands(
     root: Path,
     args: argparse.Namespace,
@@ -2984,17 +2413,6 @@ def _path_is_within(path: str, allowed: str) -> bool:
     return path == allowed or path.startswith(f"{allowed}/")
 
 
-def _clear_phase_review_evidence(phase: dict[str, object]) -> None:
-    for key in [
-        "code_review",
-        "code_review_event",
-        "test_review",
-        "test_review_event",
-        "test_commands",
-    ]:
-        phase.pop(key, None)
-
-
 def _open_validation_fix_phase(store: StateStore, manifest) -> None:
     status = store.load_phase_status()
     existing = [int(phase) for phase in status.phases if str(phase).isdigit()]
@@ -3174,10 +2592,6 @@ def _validation_source_lines(results: list[dict[str, object]]) -> list[str]:
     if "test-suite" in sources:
         lines.append("configured full test-suite command")
     return lines
-
-
-def _plan_has_traceability(root: Path) -> bool:
-    return has_traceability(root)
 
 
 if __name__ == "__main__":

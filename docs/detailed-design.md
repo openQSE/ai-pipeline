@@ -692,8 +692,10 @@ User-facing stage commands follow stable transition rules:
   next uncommitted phase from durable state.
 - Running `electroboy document` resumes the documentation stage after
   validation testing passes.
-- Running a stage command after pipeline completion starts a new controlled
-  iteration from that stage.
+- Running a public workflow command after pipeline completion starts a new
+  controlled iteration from that stage.
+- Running `electroboy stage <stage> --force --reason <text>` sets the active
+  stage directly and records an audit event without completing skipped gates.
 
 Allowed operator actions:
 
@@ -703,10 +705,13 @@ Allowed operator actions:
 - Approve a gate when the gate's documented criteria are satisfied.
 - Reopen an earlier baseline by running the earlier stage command with a
   recorded reason.
+- Force the active stage explicitly for expert recovery or existing-project
+  adoption.
 
 Blocked operator actions:
 
-- Start a later stage without all predecessor gates passing.
+- Start a later stage without all predecessor gates passing, unless the
+  operator uses the explicit forced stage override.
 - Mark a stage complete without the required artifact snapshot.
 - Start phase implementation before implementation planning is approved.
 - Commit a phase before code review and phase test review pass.

@@ -48,24 +48,12 @@ class PhaseLoopTests(unittest.TestCase):
             root = Path(tmp)
             write_manual_runtime(root)
             self.prepare_implementation_run(root)
-            self.assertEqual(
-                self.run_cli(["--root", str(root), "phase", "start", "1"])[0],
-                0,
-            )
+            start_phase(root, 1)
 
             blocked, _stdout, stderr = self.run_cli(
                 ["--root", str(root), "phase", "commit", "1"]
             )
-            self.assertEqual(
-                self.run_cli(
-                    ["--root", str(root), "phase", "review", "1", "--pass"]
-                )[0],
-                0,
-            )
-            self.assertEqual(
-                self.run_cli(["--root", str(root), "phase", "test", "1", "--pass"])[0],
-                0,
-            )
+            mark_phase_reviews(root, 1)
             manual_blocked, _manual_stdout, manual_stderr = self.run_cli(
                 ["--root", str(root), "phase", "commit", "1"]
             )
@@ -84,22 +72,6 @@ class PhaseLoopTests(unittest.TestCase):
         self.assertIn("code review agent evidence is missing", manual_stderr)
         self.assertEqual(passed, 0)
         self.assertIn("committed phase: 1", stdout)
-
-    def test_phase_start_blocks_different_active_phase(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self.prepare_implementation_run(root)
-            self.assertEqual(
-                self.run_cli(["--root", str(root), "phase", "start", "1"])[0],
-                0,
-            )
-
-            code, _stdout, stderr = self.run_cli(
-                ["--root", str(root), "phase", "start", "2"]
-            )
-
-        self.assertEqual(code, 1)
-        self.assertIn("another phase is already active", stderr)
 
     def test_code_command_starts_next_planned_phase(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -163,10 +135,7 @@ class PhaseLoopTests(unittest.TestCase):
             root = Path(tmp)
             write_manual_runtime(root)
             self.prepare_implementation_run(root)
-            self.assertEqual(
-                self.run_cli(["--root", str(root), "phase", "start", "1"])[0],
-                0,
-            )
+            start_phase(root, 1)
             self.assertEqual(
                 self.run_cli(["--root", str(root), "code", "--phased"])[0],
                 0,
@@ -210,67 +179,31 @@ class PhaseLoopTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("outside phase 1 scope", stderr)
 
-    def test_phase_drift_blocks_commit_until_plan_update(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            write_manual_runtime(root)
-            write_file(
-                root / "docs" / "implementation-plan.md",
-                "# Plan\n\n## Phase 1\n\nRequirements: REQ-1\nPaths: phase.txt\n",
-            )
-            self.prepare_implementation_run(root)
-            self.assertEqual(self.run_cli(["--root", str(root), "phase", "start", "1"])[0], 0)
-            self.assertEqual(
-                self.run_cli(["--root", str(root), "code", "--phased"])[0],
-                0,
-            )
-            self.assertEqual(
-                self.run_cli(
-                    [
-                        "--root",
-                        str(root),
-                        "phase",
-                        "drift",
-                        "1",
-                        "--reason",
-                        "Scope changed.",
-                    ]
-                )[0],
-                0,
-            )
-
-            blocked, _stdout, stderr = self.run_cli(
-                ["--root", str(root), "phase", "commit", "1"]
-            )
-            self.assertEqual(
-                self.run_cli(
-                    ["--root", str(root), "plan", "update", "--reason", "Updated."]
-                )[0],
-                0,
-            )
-            sha = create_git_commit(root, "phase 1: stale review", "phase stale\n")
-            still_blocked, _stdout, rerun_stderr = self.run_cli(
-                ["--root", str(root), "phase", "commit", "1", "--sha", sha]
-            )
-            self.assertEqual(
-                self.run_cli(["--root", str(root), "code", "--phased"])[0],
-                0,
-            )
-            fresh_sha = create_git_commit(root, "phase 1: refreshed review", "phase fresh\n")
-            passed, _stdout, _stderr = self.run_cli(
-                ["--root", str(root), "phase", "commit", "1", "--sha", fresh_sha]
-            )
-
-        self.assertEqual(blocked, 1)
-        self.assertIn("active phase has plan drift", stderr)
-        self.assertEqual(still_blocked, 1)
-        self.assertIn("code review has not passed", rerun_stderr)
-        self.assertEqual(passed, 0)
-
 
 def write_file(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def start_phase(root: Path, phase_number: int) -> None:
+    store = StateStore(root)
+    status = store.load_phase_status()
+    status.active_phase = phase_number
+    status.phases[str(phase_number)] = {
+        "status": "active",
+        "objective": "",
+        "plan_current": True,
+    }
+    store.save_phase_status(status)
+
+
+def mark_phase_reviews(root: Path, phase_number: int) -> None:
+    store = StateStore(root)
+    status = store.load_phase_status()
+    phase = status.phases.setdefault(str(phase_number), {})
+    phase["code_review"] = "passed"
+    phase["test_review"] = "passed"
+    store.save_phase_status(status)
 
 
 def write_manual_runtime(root: Path) -> None:

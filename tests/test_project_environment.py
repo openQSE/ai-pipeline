@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from electroboy.cli import main  # noqa: E402
+from electroboy.state_store import StateStore  # noqa: E402
 
 
 class ProjectEnvironmentTests(unittest.TestCase):
@@ -103,10 +104,7 @@ class ProjectEnvironmentTests(unittest.TestCase):
     def test_deactivate_records_activity_when_run_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.assertEqual(
-                self.run_cli(["--root", str(root), "init", "--run-id", "run-1"])[0],
-                0,
-            )
+            StateStore(root).init_run(run_id="run-1")
 
             code, stdout, stderr = self.run_cli(["--root", str(root), "deactivate"])
 

@@ -419,6 +419,7 @@ electroboy code-approve
 electroboy deactivate
 electroboy report summary
 electroboy report trace
+electroboy stage <stage> --force --reason <text>
 ```
 
 `requirements`, `design`, and `implementation-plan` invoke the configured
@@ -451,22 +452,9 @@ Earlier stage commands are the primary iteration mechanism. When the active run
 is beyond the requested stage, the command opens a change-control record,
 stores the supplied reason, invalidates downstream gates after approval, and
 re-enters the ordered pipeline at that stage. Later stage commands are blocked
-until all predecessor gates pass.
-
-The implementation can still expose lower-level commands for debugging,
-testing, and CI automation:
-
-```text
-electroboy debug gate <name>
-electroboy debug phase start <n>
-electroboy debug phase review <n> --pass
-electroboy debug phase test <n> --pass
-electroboy debug phase commit <n> --sha <commit-sha>
-electroboy debug validate [--command <argv>...]
-electroboy debug change status
-```
-
-Those commands use the same gate engine and activity log as the primary CLI.
+until all predecessor gates pass. Expert users can use `stage --force` to set
+the active stage directly; it records an audit event without completing skipped
+gates.
 
 ## Flow Enforcement
 

@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from electroboy.cli import main  # noqa: E402
+from electroboy.models import ReviewIssue  # noqa: E402
+from electroboy.state_store import StateStore  # noqa: E402
 
 
 class DesignLoopTests(unittest.TestCase):
@@ -25,19 +27,12 @@ class DesignLoopTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_file(root / "docs" / "requirements.md", "# Requirements\n")
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
             write_manual_runtime(root)
             self.assertEqual(self.run_cli(["--root", str(root), "requirements"])[0], 0)
 
             code, _stdout, stderr = self.run_cli(
-                [
-                    "--root",
-                    str(root),
-                    "stage",
-                    "requirements",
-                    "--human-approved",
-                    "--author-confirmed",
-                ]
+                ["--root", str(root), "requirements-approve"]
             )
 
             run_dir = next(
@@ -52,73 +47,40 @@ class DesignLoopTests(unittest.TestCase):
             root = Path(tmp)
             write_file(root / "docs" / "requirements.md", "# Requirements\n")
             write_file(root / "docs" / "detailed-design.md", "# Design\n")
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            store = StateStore(root)
+            store.init_run(run_id="run-1")
             write_manual_runtime(root)
             self.assertEqual(self.run_cli(["--root", str(root), "requirements"])[0], 0)
             self.assertEqual(
-                self.run_cli(
-                    [
-                        "--root",
-                        str(root),
-                        "stage",
-                        "requirements",
-                        "--human-approved",
-                        "--author-confirmed",
-                    ]
-                )[0],
+                self.run_cli(["--root", str(root), "requirements-approve"])[0],
                 0,
             )
-            self.assertEqual(
-                self.run_cli(
-                    [
-                        "--root",
-                        str(root),
-                        "stage",
-                        "design",
-                        "--human-approved",
-                    ]
-                )[0],
-                0,
-            )
-            self.assertEqual(
-                self.run_cli(
-                    [
-                        "--root",
-                        str(root),
-                        "issues",
-                        "add",
-                        "design-review.jsonl",
-                        "--id",
-                        "DES-1",
-                        "--source",
-                        "design-review-agent",
-                        "--severity",
-                        "major",
-                        "--summary",
-                        "Missing workflow.",
-                    ]
-                )[0],
-                0,
+            store.append_review_issue(
+                "design-review.jsonl",
+                ReviewIssue(
+                    issue_id="DES-1",
+                    source="design-review-agent",
+                    severity="major",
+                    status="open",
+                    summary="Missing workflow.",
+                ),
             )
 
             blocked, _stdout, stderr = self.run_cli(
-                ["--root", str(root), "stage", "design-review"]
+                ["--root", str(root), "design-review"]
             )
-            self.assertEqual(
-                self.run_cli(
-                    [
-                        "--root",
-                        str(root),
-                        "issues",
-                        "resolve",
-                        "design-review.jsonl",
-                        "DES-1",
-                    ]
-                )[0],
-                0,
+            store.append_review_issue(
+                "design-review.jsonl",
+                ReviewIssue(
+                    issue_id="DES-1",
+                    source="design-review-agent",
+                    severity="major",
+                    status="verified",
+                    summary="Missing workflow.",
+                ),
             )
             passed, _stdout, _stderr = self.run_cli(
-                ["--root", str(root), "stage", "design-review"]
+                ["--root", str(root), "design-review"]
             )
 
         self.assertEqual(blocked, 1)

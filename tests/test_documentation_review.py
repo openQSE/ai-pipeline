@@ -41,9 +41,10 @@ class DocumentationReviewTests(unittest.TestCase):
             root = Path(tmp)
             store = self.prepare_docs_review_run(root)
             write_docs(root, include_api=False)
+            write_manual_runtime(root)
 
             code, stdout, stderr = self.run_cli(
-                ["--root", str(root), "docs-review"]
+                ["--root", str(root), "document"]
             )
             issues = store.read_review_issues("documentation-review.jsonl")
 
@@ -57,11 +58,12 @@ class DocumentationReviewTests(unittest.TestCase):
             root = Path(tmp)
             store = self.prepare_docs_review_run(root)
             write_docs(root, include_api=False)
-            self.assertEqual(self.run_cli(["--root", str(root), "docs-review"])[0], 1)
+            write_manual_runtime(root)
+            self.assertEqual(self.run_cli(["--root", str(root), "document"])[0], 1)
             write_docs(root, include_api=True)
 
             code, stdout, stderr = self.run_cli(
-                ["--root", str(root), "docs-review"]
+                ["--root", str(root), "document"]
             )
             issues = store.read_review_issues("documentation-review.jsonl")
 
@@ -74,9 +76,10 @@ class DocumentationReviewTests(unittest.TestCase):
             root = Path(tmp)
             store = self.prepare_docs_review_run(root)
             write_docs(root, include_api=True)
+            write_manual_runtime(root)
 
             code, stdout, stderr = self.run_cli(
-                ["--root", str(root), "docs-review"]
+                ["--root", str(root), "document"]
             )
             manifest = store.load_current_manifest()
             api_snapshot = (
@@ -149,11 +152,10 @@ def write_docs(root: Path, include_api: bool) -> None:
         write_file(
             root / "docs" / "api.md",
             "# API\n\n"
-            "Commands: new init status resume deactivate requirements "
+            "Commands: new status deactivate requirements "
             "requirements-approve design design-review design-approve "
             "implementation-plan plan-approve code document code-approve "
-            "report stage gate phase validate docs-review plan issues agent "
-            "artifacts change.\n",
+            "report stage phase validate.\n",
         )
 
 

@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from electroboy.cli import main  # noqa: E402
+from electroboy.models import STAGE_IMPLEMENTATION  # noqa: E402
+from electroboy.state_store import StateStore  # noqa: E402
 
 
 class CliTests(unittest.TestCase):
@@ -21,9 +23,9 @@ class CliTests(unittest.TestCase):
             code = main(args)
         return code, stdout.getvalue(), stderr.getvalue()
 
-    def test_init_and_status(self) -> None:
+    def test_new_and_status(self) -> None:
         with temp_project() as root:
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            self.assertEqual(self.run_cli(["new", str(root), "--run-id", "run-1"])[0], 0)
 
             code, stdout, stderr = self.run_cli(["--root", str(root), "status"])
 
@@ -34,10 +36,10 @@ class CliTests(unittest.TestCase):
     def test_rejects_design_before_requirements(self) -> None:
         with temp_project() as root:
             write_file(root / "docs" / "detailed-design.md", "# Design\n")
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
 
             code, _stdout, stderr = self.run_cli(
-                ["--root", str(root), "stage", "design"]
+                ["--root", str(root), "design"]
             )
 
         self.assertEqual(code, 1)
@@ -46,32 +48,22 @@ class CliTests(unittest.TestCase):
     def test_requirements_stage_advances_to_design(self) -> None:
         with temp_project() as root:
             write_file(root / "docs" / "requirements.md", "# Requirements\n")
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
             write_manual_runtime(root)
             self.assertEqual(self.run_cli(["--root", str(root), "requirements"])[0], 0)
 
             code, stdout, stderr = self.run_cli(
-                [
-                    "--root",
-                    str(root),
-                    "stage",
-                    "requirements",
-                    "--human-approved",
-                    "--author-confirmed",
-                ]
+                ["--root", str(root), "requirements-approve"]
             )
-            gate_code, gate_stdout, _gate_stderr = self.run_cli(
-                ["--root", str(root), "gate", "requirements"]
-            )
+            manifest = StateStore(root).load_current_manifest()
 
         self.assertEqual(code, 0, stderr)
         self.assertIn("active stage: design", stdout)
-        self.assertEqual(gate_code, 0)
-        self.assertIn("requirements: pass", gate_stdout)
+        self.assertTrue(manifest.has_gate("requirements"))
 
     def test_public_requirements_command_records_authoring(self) -> None:
         with temp_project() as root:
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
             write_manual_runtime(root)
 
             code, stdout, stderr = self.run_cli(
@@ -85,7 +77,7 @@ class CliTests(unittest.TestCase):
     def test_requirements_approval_requires_design_author_event(self) -> None:
         with temp_project() as root:
             write_file(root / "docs" / "requirements.md", "# Requirements\n")
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
 
             code, _stdout, stderr = self.run_cli(
                 ["--root", str(root), "requirements-approve"]
@@ -98,7 +90,7 @@ class CliTests(unittest.TestCase):
         with temp_project() as root:
             write_file(root / "docs" / "requirements.md", "# Requirements\n")
             write_file(root / "docs" / "detailed-design.md", "# Design\n")
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
             write_manual_runtime(root)
             self.assertEqual(self.run_cli(["--root", str(root), "requirements"])[0], 0)
             self.assertEqual(
@@ -124,25 +116,16 @@ class CliTests(unittest.TestCase):
         with temp_project() as root:
             write_file(root / "docs" / "requirements.md", "# Requirements\n")
             write_file(root / "docs" / "implementation-plan.md", "# Plan\n")
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
             write_manual_runtime(root)
             self.assertEqual(self.run_cli(["--root", str(root), "requirements"])[0], 0)
             self.assertEqual(
-                self.run_cli(
-                    [
-                        "--root",
-                        str(root),
-                        "stage",
-                        "requirements",
-                        "--human-approved",
-                        "--author-confirmed",
-                    ]
-                )[0],
+                self.run_cli(["--root", str(root), "requirements-approve"])[0],
                 0,
             )
 
             code, _stdout, stderr = self.run_cli(
-                ["--root", str(root), "stage", "plan"]
+                ["--root", str(root), "plan-approve"]
             )
 
         self.assertEqual(code, 1)
@@ -156,7 +139,7 @@ class CliTests(unittest.TestCase):
                 root / "docs" / "implementation-plan.md",
                 "# Plan\n\n## Phase 1\n\nRequirements: REQ-1\n",
             )
-            self.assertEqual(self.run_cli(["--root", str(root), "init"])[0], 0)
+            StateStore(root).init_run(run_id="run-1")
             write_manual_runtime(root)
             self.assertEqual(self.run_cli(["--root", str(root), "requirements"])[0], 0)
             self.assertEqual(
@@ -182,6 +165,42 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, 0, stderr)
         self.assertIn("active stage: implementation", stdout)
+
+    def test_stage_force_sets_active_stage(self) -> None:
+        with temp_project() as root:
+            store = StateStore(root)
+            store.init_run(run_id="run-1")
+
+            code, stdout, stderr = self.run_cli(
+                [
+                    "--root",
+                    str(root),
+                    "stage",
+                    STAGE_IMPLEMENTATION,
+                    "--force",
+                    "--reason",
+                    "Adopting existing project.",
+                ]
+            )
+            manifest = store.load_current_manifest()
+            activity = store.read_activity()
+
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("previous stage: requirements", stdout)
+        self.assertIn("active stage: implementation", stdout)
+        self.assertEqual(manifest.active_stage, STAGE_IMPLEMENTATION)
+        self.assertEqual(activity[-1]["action"], "forced-stage-change")
+
+    def test_stage_force_requires_reason(self) -> None:
+        with temp_project() as root:
+            StateStore(root).init_run(run_id="run-1")
+
+            code, _stdout, stderr = self.run_cli(
+                ["--root", str(root), "stage", STAGE_IMPLEMENTATION, "--force"]
+            )
+
+        self.assertEqual(code, 2)
+        self.assertIn("stage changes require --reason", stderr)
 
 
 class temp_project:
