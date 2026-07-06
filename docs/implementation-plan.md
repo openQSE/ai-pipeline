@@ -412,7 +412,8 @@ ai-pipeline design-review
 ai-pipeline design-approve
 ai-pipeline implementation-plan [--reason <text>]
 ai-pipeline plan-approve
-ai-pipeline code [--reason <text>]
+ai-pipeline code [--reason <text>] [--phased]
+ai-pipeline validate
 ai-pipeline document [--reason <text>]
 ai-pipeline code-approve
 ai-pipeline deactivate
@@ -428,10 +429,18 @@ session exits. Approval remains separate so the human operator can review the
 artifact before the pipeline advances.
 
 `design-review` starts the automated design review loop. `code` starts or
-resumes the automated implementation loop through validation testing. During
-`code`, the orchestrator uses Rich progress indicators for the active phase,
-code review, test review, validation testing, escalations, and resumable
-checkpoints.
+resumes the fully automated implementation loop. By default, it runs every
+remaining planned phase, invokes coding, code review, and test review agents,
+creates and records each valid phase commit, and advances to validation when
+the implementation plan is complete. `code --phased` runs one phase and leaves
+commit creation or commit recording to the operator before the next phase can
+start. During `code`, the orchestrator uses Rich progress indicators for the
+active phase, code review, test review, escalations, and resumable checkpoints.
+
+`validate` runs final validation testing after the implementation stage is
+complete. It runs the full test suite and the validation commands declared by
+the artifacts. If validation finds blocker or major issues, the orchestrator
+opens a validation-fix implementation phase and returns the run to `code`.
 
 `document` starts or resumes the documentation finesse pass. It gives the
 Documentation Agent the final codebase, requirements, design, implementation
@@ -816,6 +825,7 @@ Implement one-phase-at-a-time coding, review, test review, and commit flow.
 Scope:
 
 - Add `ai-pipeline code`.
+- Add `ai-pipeline code --phased` for explicit one-phase checkpoint mode.
 - Start active phase.
 - Invoke coding agent.
 - Invoke code review agent.
@@ -823,17 +833,20 @@ Scope:
 - Invoke phase test review agent.
 - Iterate until phase test review passes.
 - Detect active-phase drift from `docs/implementation-plan.md`.
-- Record the verified phase commit.
+- Create and record the verified phase commit by default.
+- Preserve manual commit recording through phased mode.
 - Update `phase-status.json`.
 - Persist checkpoints before and after each agent turn.
-- Render stage, phase, review, test, validation, and escalation progress with
-  Rich.
+- Render stage, phase, review, test, and escalation progress with Rich.
 
 Acceptance criteria:
 
 - `ai-pipeline code` resumes after interruption from the last durable
   checkpoint.
-- Each phase records an independent git commit.
+- `ai-pipeline code` automates every remaining planned phase by default.
+- `ai-pipeline code --phased` runs only the active phase and waits for manual
+  commit recording.
+- Each phase records an independent git commit before the next phase starts.
 - A new phase cannot start while another phase is active.
 - Phase review and test review can update only the active phase.
 - Phase commits require an existing git commit SHA reachable from `HEAD`.

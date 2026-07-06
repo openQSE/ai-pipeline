@@ -19,7 +19,7 @@ Operator workflow commands:
 - `design-approve` records human design acceptance.
 - `implementation-plan [--reason <text>]` starts or resumes planning.
 - `plan-approve` records human and Design Author plan approval.
-- `code [--reason <text>]` starts or resumes implementation phase work.
+- `code [--reason <text>] [--phased]` starts or resumes implementation work.
 - `document [--reason <text>]` runs documentation review and refinement.
 - `code-approve` records final human completion approval.
 - `deactivate` leaves an activated project shell environment.
@@ -83,6 +83,14 @@ script sources the configured Python environment. It only deactivates that
 Python environment when the pipeline owns that activation.
 
 ## Phase Commands
+
+`ai-pipeline code` is the normal implementation command. By default, it runs
+each remaining planned phase, invokes coding, code review, and test review
+agents, creates a valid phase commit, records that commit, and continues until
+the implementation stage is complete.
+
+`ai-pipeline code --phased` is the explicit manual checkpoint mode. It runs one
+phase and leaves commit creation or commit recording to the operator.
 
 ```bash
 ai-pipeline phase start <n>

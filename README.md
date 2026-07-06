@@ -1,8 +1,8 @@
-# AI Agent Pipeline
+# ElectroBoy
 
-AI Agent Pipeline is a local orchestration tool for disciplined AI-assisted
-software development. It turns an informal agent workflow into an ordered,
-auditable pipeline:
+ElectroBoy is an AI agent pipeline for disciplined AI-assisted software
+development. It turns an informal agent workflow into an ordered, auditable
+pipeline:
 
 1. Define requirements with the human operator and design author agent.
 2. Create and review the detailed design.
@@ -21,9 +21,9 @@ loops are recorded.
 Create a pipeline project and enter its project environment:
 
 ```bash
-./ai-pipeline new path/to/project
+./electroboy new path/to/project
 source path/to/project/bin/activate
-ai-pipeline status
+electroboy status
 ```
 
 `new` creates or enters the target directory. If the directory is not already
@@ -32,67 +32,92 @@ repositories are reused instead of nesting a new repository. The command also
 creates the standard pipeline artifacts, creates `.agent-pipeline/`, and
 installs `path/to/project/bin/activate`.
 
-Define and approve requirements with ElectroBoy:
+Define and approve requirements:
 
 ```bash
-ai-pipeline requirements
-ai-pipeline requirements-approve
+electroboy requirements
+electroboy requirements-approve
 ```
 
 Create, review, and approve the design:
 
 ```bash
-ai-pipeline design
-ai-pipeline design-review
-ai-pipeline design-approve
+electroboy design
+electroboy design-review
+electroboy design-approve
 ```
 
 Create and approve the implementation plan:
 
 ```bash
-ai-pipeline implementation-plan
-ai-pipeline plan-approve
+electroboy implementation-plan
+electroboy plan-approve
+```
+
+Commit the approved pre-implementation baseline:
+
+```bash
+git status --short
+git add .
+git commit -m "project: approve implementation baseline"
 ```
 
 Run the automated implementation pipeline, finesse documentation, and record
 final approval:
 
 ```bash
-ai-pipeline code
-ai-pipeline phase commit <phase> --sha <commit-sha>
-ai-pipeline code
-ai-pipeline validate
-ai-pipeline document
-ai-pipeline code-approve
+electroboy code
+electroboy validate
+electroboy document
+electroboy code-approve
 ```
 
-`code` starts or resumes one implementation phase, invokes the configured
-coding agent, invokes code review, invokes test review, and records the agent
-evidence required by the phase commit gate. After reviewing the resulting git
-commit, record it with `phase commit`. Repeat `code` and `phase commit` until
-all phases are complete, then run validation. Validation always runs the full
-test suite plus artifact-declared validation commands. If validation fails, the
+The automated code loop expects a clean git worktree before it creates phase
+commits. Commit the approved requirements, design, implementation plan,
+generated project files, and any hand-authored baseline files before running
+`code`.
+
+`code` starts or resumes the fully automated implementation loop. It selects
+the active or next planned phase, invokes the configured coding agent, invokes
+code review, invokes test review, creates and records the phase commit, and
+continues until every planned phase is complete. The command stops only when an
+agent fails, an unresolved review issue blocks progress, phase scope changes,
+git cannot create a valid commit, or the agents need human input.
+
+After `code` completes, run `validate`. Validation always runs the full test
+suite plus artifact-declared validation commands. If validation fails, the
 pipeline opens a validation-fix phase and returns to `code`. `document` runs
 the documentation refinement and review phase. If a review or validation issue
 needs human input, the command records the escalation and stops at a resumable
 checkpoint.
 
+Use phased mode only when a human wants to inspect and record each phase commit
+manually:
+
+```bash
+electroboy code --phased
+electroboy phase commit <phase> --sha <commit-sha>
+```
+
+`code --phased` preserves the one-phase checkpoint workflow. It runs the active
+phase agents and leaves commit creation or commit recording to the operator.
+
 Resume an interrupted run from the same project:
 
 ```bash
 source path/to/project/bin/activate
-ai-pipeline status
-ai-pipeline code
+electroboy status
+electroboy code
 ```
 
 Move backward when later work exposes a missing requirement, design issue, or
 phase-plan problem:
 
 ```bash
-ai-pipeline requirements --reason "New setup workflow discovered"
-ai-pipeline design --reason "Architecture needs queued run support"
-ai-pipeline implementation-plan --reason "Phase split needs to change"
-ai-pipeline document --reason "Improve API examples"
+electroboy requirements --reason "New setup workflow discovered"
+electroboy design --reason "Architecture needs queued run support"
+electroboy implementation-plan --reason "Phase split needs to change"
+electroboy document --reason "Improve API examples"
 ```
 
 The pipeline allows controlled backward movement and blocks forward skips. An
@@ -102,16 +127,17 @@ downstream gates. A later stage command fails until its predecessor gates pass.
 Leave the project environment:
 
 ```bash
-ai-pipeline deactivate
+electroboy deactivate
 ```
 
 The activation script can also enter a configured Python environment. The
-pipeline uses `ai-pipeline deactivate` instead of bare `deactivate` so it does
+pipeline uses `electroboy deactivate` instead of bare `deactivate` so it does
 not conflict with Python virtual environment behavior.
 
-The repository entrypoint can be run as either `./ai-pipeline` or
-`./electroboy`. Installed command environments expose the same CLI as
-`ai-pipeline` and `electroboy`.
+After activation, use `electroboy` without `./` so the project environment
+selects the active project.
+
+The `./ai-pipeline` command is an alias.
 
 ## Why This Exists
 
@@ -140,10 +166,10 @@ operator-facing workflow described above.
 Implemented capabilities:
 
 - Python package and CLI entry point.
-- `ai-pipeline` and `electroboy` command entrypoints.
-- `ai-pipeline new <path>` project creation.
+- ElectroBoy command entrypoint with the `ai-pipeline` alias.
+- `./electroboy new <path>` project creation.
 - Generated project activation scripts under `<project>/bin/activate`.
-- `ai-pipeline deactivate` shell-safe deactivation.
+- `electroboy deactivate` shell-safe deactivation.
 - JSON-backed shared state under `.agent-pipeline/shared/`.
 - Local runtime state under `.agent-pipeline/local/`.
 - Ordered stage gates for requirements, design, planning, implementation,
@@ -162,6 +188,8 @@ Implemented capabilities:
 - Summary and trace reports.
 - Rich-compatible progress output for automatic implementation commands, with
   plain text fallback when Rich is unavailable.
+- Default automated implementation that commits each reviewed phase and
+  advances to validation when the implementation plan is complete.
 - Runtime adapter scaffolding for manual, generic CLI, Codex exec, and Codex
   SDK runtimes.
 - Unit tests for pipeline state, gates, runtime adapters, phase flow,
@@ -183,16 +211,14 @@ output.
 Run directly from a checkout:
 
 ```bash
-./ai-pipeline --help
 ./electroboy --help
-./ai-pipeline new /tmp/example-pipeline-project
+./electroboy new /tmp/example-pipeline-project
 ```
 
 Or install in editable mode:
 
 ```bash
 python -m pip install -e .
-ai-pipeline --help
 electroboy --help
 ```
 
@@ -201,39 +227,40 @@ electroboy --help
 Create or enter a project:
 
 ```bash
-./ai-pipeline new path/to/project
+./electroboy new path/to/project
 source path/to/project/bin/activate
 ```
 
 Show the current stage, blocked gate, and next command:
 
 ```bash
-ai-pipeline status
+electroboy status
 ```
 
 Interactive authoring commands:
 
 ```bash
-ai-pipeline requirements
-ai-pipeline design
-ai-pipeline implementation-plan
+electroboy requirements
+electroboy design
+electroboy implementation-plan
 ```
 
 Approval commands:
 
 ```bash
-ai-pipeline requirements-approve
-ai-pipeline design-approve
-ai-pipeline plan-approve
-ai-pipeline code-approve
+electroboy requirements-approve
+electroboy design-approve
+electroboy plan-approve
+electroboy code-approve
 ```
 
 Automated commands:
 
 ```bash
-ai-pipeline design-review
-ai-pipeline code
-ai-pipeline document
+electroboy design-review
+electroboy code
+electroboy validate
+electroboy document
 ```
 
 `requirements`, `design`, and `implementation-plan` start the configured
@@ -241,11 +268,25 @@ Design Author Agent with the right artifact context. The session can end and
 be restarted. The next invocation rebuilds context from repository artifacts,
 shared pipeline state, decisions, review issues, and activity events.
 
-`code` resumes from the last durable checkpoint. It implements one phase at a
-time and runs code review and test review. `phase commit` records the reviewed
-git commit for that phase. After all phase commits are recorded, validation
-testing runs before the documentation finesse pass.
+Before `electroboy code`, commit the approved pre-implementation baseline:
+
+```bash
+git status --short
+git add .
+git commit -m "project: approve implementation baseline"
+```
+
+`code` resumes from the last durable checkpoint. By default, it implements,
+reviews, tests, commits, and records every remaining planned phase. After all
+phase commits are recorded, validation testing runs before the documentation
+finesse pass.
 `document` completes documentation review before `code-approve` can pass.
+If `document` reports existing documentation issues, resolve or transition
+those issue records before running `document` again.
+
+`code --phased` is available when the operator wants the older one-phase
+checkpoint workflow. In that mode, `phase commit` records a reviewed git
+commit for the active phase before the next `code --phased` run starts.
 
 ## Flow Enforcement
 
@@ -257,7 +298,7 @@ predecessor gates.
 For example, this fails immediately after `new`:
 
 ```bash
-ai-pipeline code
+electroboy code
 ```
 
 The command is blocked because the run is still at `requirements`. This is the
@@ -267,9 +308,9 @@ before requirements, design, and implementation planning are approved.
 Useful inspection commands:
 
 ```bash
-ai-pipeline status
-ai-pipeline report summary
-ai-pipeline report trace
+electroboy status
+electroboy report summary
+electroboy report trace
 ```
 
 ## Change Control
@@ -281,10 +322,10 @@ baseline instead of jumping directly into an arbitrary stage.
 Run the earliest affected stage command with a reason:
 
 ```bash
-ai-pipeline requirements --reason "Validation found a missing setup workflow"
-ai-pipeline design --reason "The architecture needs queued run support"
-ai-pipeline implementation-plan --reason "The phase split is wrong"
-ai-pipeline document --reason "Improve API examples"
+electroboy requirements --reason "Validation found a missing setup workflow"
+electroboy design --reason "The architecture needs queued run support"
+electroboy implementation-plan --reason "The phase split is wrong"
+electroboy document --reason "Improve API examples"
 ```
 
 The orchestrator records a change-control event, asks for approval when
@@ -341,7 +382,7 @@ documentation-writing roles run with `--sandbox workspace-write` unless the
 runtime configuration supplies an explicit sandbox option.
 
 If `activate_python` is true, `source path/to/project/bin/activate` also
-enters the configured Python environment. `ai-pipeline deactivate` restores the
+enters the configured Python environment. `electroboy deactivate` restores the
 pipeline context and only deactivates the Python environment when the pipeline
 owns that activation.
 
@@ -385,12 +426,12 @@ python -m unittest discover -s tests
 Run the CLI smoke check:
 
 ```bash
-ai-pipeline --help
+./electroboy --help
 ```
 
 Run a full smoke check:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
-ai-pipeline --help
+./electroboy --help
 ```

@@ -230,6 +230,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m ai_pipeline --help
 ## Phase 8. Phase Implementation Loop
 
 Follow-up commit: `14ad0a6 phase 8: add implementation workflow commands`
+Follow-up commit: `661157a pipeline: automate code phase commits`
 
 Implemented:
 
@@ -248,6 +249,10 @@ Implemented:
 - Made `code` resume an already active phase from durable phase status.
 - Made `code` invoke the configured coding, code review, and test review
   agent runtimes for the active phase.
+- Made `code` automate every remaining planned phase by default.
+- Added `code --phased` for the one-phase manual checkpoint workflow.
+- Made default `code` create, validate, and record phase commits.
+- Advanced the run to validation after all planned phase commits are recorded.
 - Persisted coding, code review, and test review event ids in phase status.
 - Required phase commit gates to use runtime-backed review evidence instead of
   manual pass flags alone.
@@ -259,6 +264,7 @@ Implemented:
   metadata when a planned phase declares scope paths.
 - Added Rich-compatible progress output with a plain text fallback.
 - Added tests for public `code` phase startup.
+- Added tests for default automated multi-phase implementation.
 
 Verification:
 

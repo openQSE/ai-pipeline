@@ -589,9 +589,13 @@ The basic loop is:
 6. The coding agent implements requested tests or fixes.
 7. The code review agent reviews any new code or tests.
 8. The test review agent re-runs tests and verifies coverage.
-9. The coding agent commits the phase after all gates pass.
+9. The orchestrator creates or records the phase commit after all gates pass.
 
 The next phase starts only after the current phase commit exists.
+
+By default, `ai-pipeline code` runs this loop for every remaining planned
+phase. `ai-pipeline code --phased` runs one phase and leaves commit creation
+or commit recording to the operator before the next phase can start.
 
 If development changes phase scope, sequencing, acceptance criteria, required
 tests, or documentation impact, the coding agent stops implementation work and
