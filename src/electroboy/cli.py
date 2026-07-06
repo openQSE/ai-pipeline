@@ -1395,19 +1395,30 @@ def _write_project_runtime(project_root: Path) -> None:
 
 def _activation_script(project_root: Path) -> str:
     quoted_root = shlex.quote(str(project_root))
+    quoted_project_name = shlex.quote(project_root.name)
     return f"""# ElectroBoy project activation script.
 # Source this file from a POSIX-compatible shell.
 
 _ELECTROBOY_ACTIVATED_ROOT={quoted_root}
+_ELECTROBOY_PROJECT_PROMPT={quoted_project_name}
 _ELECTROBOY_PREVIOUS_PATH="${{PATH:-}}"
 _ELECTROBOY_PREVIOUS_PROJECT_ROOT="${{ELECTROBOY_PROJECT_ROOT:-}}"
 _ELECTROBOY_PREVIOUS_AI_PIPELINE_ROOT="${{AI_PIPELINE_PROJECT_ROOT:-}}"
 _ELECTROBOY_PREVIOUS_VIRTUAL_ENV="${{VIRTUAL_ENV:-}}"
+_ELECTROBOY_PREVIOUS_PS1="${{PS1-}}"
+if [ "${{PS1+x}}" = "x" ]; then
+    _ELECTROBOY_HAD_PS1=1
+else
+    _ELECTROBOY_HAD_PS1=0
+fi
 export _ELECTROBOY_ACTIVATED_ROOT
+export _ELECTROBOY_PROJECT_PROMPT
 export _ELECTROBOY_PREVIOUS_PATH
 export _ELECTROBOY_PREVIOUS_PROJECT_ROOT
 export _ELECTROBOY_PREVIOUS_AI_PIPELINE_ROOT
 export _ELECTROBOY_PREVIOUS_VIRTUAL_ENV
+export _ELECTROBOY_PREVIOUS_PS1
+export _ELECTROBOY_HAD_PS1
 
 ELECTROBOY_PROJECT_ROOT="$_ELECTROBOY_ACTIVATED_ROOT"
 PATH="$ELECTROBOY_PROJECT_ROOT/bin:$PATH"
@@ -1437,6 +1448,10 @@ if [ -f "$_ELECTROBOY_PROJECT_CONFIG" ] && \\
     fi
 fi
 
+if [ -n "${{PS1:-}}" ]; then
+    PS1="($_ELECTROBOY_PROJECT_PROMPT) $PS1"
+fi
+
 electroboy() {{
     if [ "${{1:-}}" = "deactivate" ]; then
         command electroboy --root "$ELECTROBOY_PROJECT_ROOT" deactivate
@@ -1457,12 +1472,20 @@ electroboy() {{
         else
             unset AI_PIPELINE_PROJECT_ROOT
         fi
+        if [ "${{_ELECTROBOY_HAD_PS1:-0}}" = "1" ]; then
+            PS1="$_ELECTROBOY_PREVIOUS_PS1"
+        else
+            unset PS1
+        fi
         export PATH
         unset _ELECTROBOY_ACTIVATED_ROOT
+        unset _ELECTROBOY_PROJECT_PROMPT
         unset _ELECTROBOY_PREVIOUS_PATH
         unset _ELECTROBOY_PREVIOUS_PROJECT_ROOT
         unset _ELECTROBOY_PREVIOUS_AI_PIPELINE_ROOT
         unset _ELECTROBOY_PREVIOUS_VIRTUAL_ENV
+        unset _ELECTROBOY_PREVIOUS_PS1
+        unset _ELECTROBOY_HAD_PS1
         unset _ELECTROBOY_OWNS_PYTHON_ENV
         unset -f electroboy
         unset -f ai-pipeline

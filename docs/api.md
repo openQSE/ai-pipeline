@@ -63,9 +63,10 @@ electroboy deactivate
 `new` creates the target directory when needed. If the target is not already
 inside a Git worktree, it initializes a repository. Existing repositories are
 reused. Activation exports `ELECTROBOY_PROJECT_ROOT`, prepends
-`<project>/bin` to `PATH`, and defines shell functions for `electroboy` and
-`ai-pipeline`. The generated wrappers pass `--root <project>` to the Python
-module and use project-local runtime code when available.
+`<project>/bin` to `PATH`, prefixes the shell prompt with the project name,
+and defines shell functions for `electroboy` and `ai-pipeline`. The generated
+wrappers pass `--root <project>` to the Python module and use project-local
+runtime code when available.
 
 If `.electroboy/project.toml` enables Python activation, the activation
 script sources the configured Python environment. It only deactivates that

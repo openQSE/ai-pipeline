@@ -80,6 +80,41 @@ class ProjectEnvironmentTests(unittest.TestCase):
         self.assertIn("usage: electroboy", completed.stdout)
         self.assertNotIn(str(ROOT), wrapper)
 
+    def test_activation_sets_and_restores_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "test-proj"
+            self.assertEqual(self.run_cli(["new", str(root)])[0], 0)
+            env = os.environ.copy()
+            env["ACTIVATE"] = str(root / "bin" / "activate")
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    (
+                        'PS1="#> "\n'
+                        '. "$ACTIVATE" >/dev/null\n'
+                        'printf "active=%s\\n" "$PS1"\n'
+                        'electroboy deactivate >/dev/null\n'
+                        'printf "restored=%s\\n" "$PS1"\n'
+                    ),
+                ],
+                cwd=root,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            completed.stdout.splitlines(),
+            ["active=(test-proj) #> ", "restored=#> "],
+        )
+
     def test_new_reuses_existing_git_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"

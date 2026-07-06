@@ -166,9 +166,10 @@ Leave the project environment:
 electroboy deactivate
 ```
 
-The activation script can also enter a configured Python environment. The
-pipeline uses `electroboy deactivate` instead of bare `deactivate` so it does
-not conflict with Python virtual environment behavior.
+The activation script prefixes the shell prompt with the project directory
+name, and can also enter a configured Python environment. The pipeline uses
+`electroboy deactivate` instead of bare `deactivate` so it can restore the
+prompt and does not conflict with Python virtual environment behavior.
 
 After activation, use `electroboy` without `./` so the project environment
 selects the active project.

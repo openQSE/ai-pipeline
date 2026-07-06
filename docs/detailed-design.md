@@ -285,10 +285,10 @@ environment and Python environment the same artifact.
 
 The pipeline does not claim the bare `deactivate` command. Activated shells use
 `electroboy deactivate` so the pipeline can restore only the variables and
-wrappers that it installed. When activation also entered a Python environment,
-the pipeline deactivates that Python environment only when it created or owns
-that activation. A Python environment that was active before project activation
-is preserved.
+wrappers that it installed, including the previous shell prompt. When
+activation also entered a Python environment, the pipeline deactivates that
+Python environment only when it created or owns that activation. A Python
+environment that was active before project activation is preserved.
 
 `ai-pipeline` is an alias for `electroboy`. Repository checkouts provide
 `./electroboy` and `./ai-pipeline`, and installed environments expose both

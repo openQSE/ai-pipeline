@@ -360,11 +360,13 @@ python_managed_by_pipeline = false
 When `python_managed_by_pipeline` is true, `electroboy deactivate` deactivates
 that Python environment while restoring pipeline variables. When the Python
 environment was active before project activation, the pipeline leaves it in
-place. The activation script does not define or override bare `deactivate`.
+place. The activation script prefixes the prompt with the project name and
+does not define or override bare `deactivate`.
 
 `electroboy deactivate` is implemented as an activated-shell wrapper around
-the CLI. The wrapper can restore environment variables in the current shell,
-while the Python process records the deactivation event in local state.
+the CLI. The wrapper can restore environment variables and the prompt in the
+current shell, while the Python process records the deactivation event in
+local state.
 
 Activation is restart-safe. If the shell closes during a code run, the operator
 can run `source <project>/bin/activate` and then `electroboy code`. The
