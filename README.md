@@ -170,6 +170,12 @@ The pipeline allows controlled backward movement and blocks forward skips. An
 earlier stage command records a change-control event and invalidates affected
 downstream gates. A later stage command fails until its predecessor gates pass.
 
+Authoring agents start with narrow prompts: each stage reads only its approved
+context documents and updates its stage artifact by default. If the operator
+asks the agent to update an upstream artifact anyway, ElectroBoy compares the
+known authoring artifacts after the session, reopens the earliest affected
+stage, and asks for the required reapproval.
+
 Leave the project environment:
 
 ```bash

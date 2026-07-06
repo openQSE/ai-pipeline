@@ -39,6 +39,14 @@ provided and the requested stage is behind the active stage. The orchestrator
 records change-control and baseline-invalidation records before resuming from
 the reopened stage.
 
+Authoring commands use scoped prompts. `requirements` targets
+`docs/requirements.md`, `design` targets `docs/detailed-design.md`, and
+`implementation-plan` targets `docs/implementation-plan.md`. If the operator
+asks the authoring agent to update an upstream authoring artifact, the
+orchestrator detects the changed artifact after the session, reopens the
+earliest affected stage, invalidates downstream gates, and prints the next
+approval command.
+
 ## Stage Commands
 
 The normal workflow advances through stage-specific commands such as

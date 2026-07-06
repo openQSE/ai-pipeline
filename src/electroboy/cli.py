@@ -132,6 +132,18 @@ DOCUMENTATION_REVIEW_FILES = [
     "docs/api.md",
 ]
 
+AUTHORING_ARTIFACT_STAGES = {
+    "docs/requirements.md": STAGE_REQUIREMENTS,
+    "docs/detailed-design.md": STAGE_DESIGN,
+    "docs/implementation-plan.md": STAGE_PLAN,
+}
+
+AUTHORING_APPROVAL_COMMANDS = {
+    STAGE_REQUIREMENTS: "electroboy requirements-approve",
+    STAGE_DESIGN: "electroboy design-review",
+    STAGE_PLAN: "electroboy plan-approve",
+}
+
 CHANGE_BASELINE_INVALIDATED_GATES = {
     "requirements": [
         GATE_REQUIREMENTS,
@@ -675,13 +687,14 @@ def _cmd_authoring_stage(
     ArtifactManager(store.root).init_templates()
     artifact = STAGE_REQUIRED_FILES.get(stage)
     reason = getattr(args, "reason", None)
-    prompt = f"Work with the operator on the {stage} artifact."
+    artifact_snapshot = _authoring_artifact_snapshot(store.root)
     result, event_id, _issue_file = _invoke_agent_role(
         store,
         role="design_author",
-        prompt=prompt,
+        prompt=_authoring_prompt(stage),
         context_paths=_authoring_inputs(stage),
     )
+    changed_artifacts = _changed_authoring_artifacts(store.root, artifact_snapshot)
     if not result.ok:
         print(result.final_message, end="" if result.final_message.endswith("\n") else "\n")
         return 1
@@ -696,12 +709,15 @@ def _cmd_authoring_stage(
             summary=summary,
             inputs=_authoring_inputs(stage),
             outputs=[artifact] if artifact else [],
+            artifact_changes=changed_artifacts,
             message_ref=f"messages/{event_id}-response.md",
         )
     )
     print(f"authoring stage: {stage}")
     if artifact:
         print(f"artifact: {artifact}")
+    if _reopen_earliest_upstream_authoring_stage(store, stage, changed_artifacts):
+        return 0
     print("next: review the artifact, then run the approval command")
     return 0
 
@@ -928,7 +944,7 @@ def _run_phase_agent_loop(store: StateStore, phase_number: int) -> int:
     coding_result, coding_event, _coding_issue_file = _invoke_agent_role(
         store,
         role="coding",
-        prompt=f"Implement phase {phase_number} from docs/implementation-plan.md.",
+        prompt=_coding_prompt(phase_number),
         context_paths=[
             "docs/requirements.md",
             "docs/detailed-design.md",
@@ -947,7 +963,7 @@ def _run_phase_agent_loop(store: StateStore, phase_number: int) -> int:
     review_result, review_event, review_issue_file = _invoke_agent_role(
         store,
         role="code_review",
-        prompt=f"Review implementation phase {phase_number}.",
+        prompt=_code_review_prompt(phase_number),
         context_paths=[
             "docs/requirements.md",
             "docs/detailed-design.md",
@@ -972,7 +988,7 @@ def _run_phase_agent_loop(store: StateStore, phase_number: int) -> int:
     test_result, test_event, test_issue_file = _invoke_agent_role(
         store,
         role="test_review",
-        prompt=f"Review tests for implementation phase {phase_number}.",
+        prompt=_test_review_prompt(phase_number),
         context_paths=[
             "docs/requirements.md",
             "docs/detailed-design.md",
@@ -1062,7 +1078,7 @@ def _cmd_document(
     result, _event_id, _issue_file = _invoke_agent_role(
         store,
         role="documentation",
-        prompt="Review final documentation against the completed codebase.",
+        prompt=_documentation_prompt(),
         context_paths=[
             "docs/requirements.md",
             "docs/detailed-design.md",
@@ -1124,12 +1140,148 @@ def _stage_args(
 
 def _authoring_inputs(stage: str) -> list[str]:
     if stage == STAGE_REQUIREMENTS:
-        return []
-    if stage == STAGE_DESIGN:
         return ["docs/requirements.md"]
-    if stage == STAGE_PLAN:
+    if stage == STAGE_DESIGN:
         return ["docs/requirements.md", "docs/detailed-design.md"]
+    if stage == STAGE_PLAN:
+        return [
+            "docs/requirements.md",
+            "docs/detailed-design.md",
+            "docs/implementation-plan.md",
+        ]
     return []
+
+
+def _authoring_prompt(stage: str) -> str:
+    prompts = {
+        STAGE_REQUIREMENTS: [
+            "Work with the operator on the requirements artifact.",
+            "",
+            "Target file: docs/requirements.md.",
+            "Read only docs/requirements.md if it exists.",
+            "Do not explore the working directory or inspect source code unless",
+            "the operator explicitly asks you to.",
+            "Update only docs/requirements.md unless the operator explicitly",
+            "asks for another change.",
+            "If the operator asks you to update another artifact, do it and",
+            "report which files changed and why.",
+        ],
+        STAGE_DESIGN: [
+            "Work with the operator on the design artifact.",
+            "",
+            "Target file: docs/detailed-design.md.",
+            "Read only docs/requirements.md and docs/detailed-design.md if",
+            "they exist.",
+            "Do not explore the working directory or inspect source code unless",
+            "the operator explicitly asks you to.",
+            "Update only docs/detailed-design.md unless the operator explicitly",
+            "asks for another change.",
+            "If the operator asks you to update another artifact, do it and",
+            "report which files changed and why.",
+        ],
+        STAGE_PLAN: [
+            "Work with the operator on the implementation plan artifact.",
+            "",
+            "Target file: docs/implementation-plan.md.",
+            "Read only docs/requirements.md, docs/detailed-design.md, and",
+            "docs/implementation-plan.md if they exist.",
+            "Do not explore the working directory or inspect source code unless",
+            "the operator explicitly asks you to.",
+            "Update only docs/implementation-plan.md unless the operator",
+            "explicitly asks for another change.",
+            "If the operator asks you to update another artifact, do it and",
+            "report which files changed and why.",
+        ],
+    }
+    return "\n".join(prompts.get(stage, [f"Work with the operator on {stage}."]))
+
+
+def _authoring_artifact_snapshot(root: Path) -> dict[str, bytes | None]:
+    return {
+        relative_path: _read_optional_bytes(root / relative_path)
+        for relative_path in AUTHORING_ARTIFACT_STAGES
+    }
+
+
+def _read_optional_bytes(path: Path) -> bytes | None:
+    if not path.exists():
+        return None
+    return path.read_bytes()
+
+
+def _changed_authoring_artifacts(
+    root: Path,
+    before: dict[str, bytes | None],
+) -> list[str]:
+    changed: list[str] = []
+    for relative_path in sorted(AUTHORING_ARTIFACT_STAGES):
+        if _read_optional_bytes(root / relative_path) != before.get(relative_path):
+            changed.append(relative_path)
+    return changed
+
+
+def _reopen_earliest_upstream_authoring_stage(
+    store: StateStore,
+    source_stage: str,
+    changed_paths: list[str],
+) -> bool:
+    target_stage = _earliest_upstream_authoring_stage(source_stage, changed_paths)
+    if target_stage is None:
+        return False
+
+    upstream_paths = [
+        path
+        for path in changed_paths
+        if AUTHORING_ARTIFACT_STAGES.get(path) == target_stage
+        or _is_stage_before(AUTHORING_ARTIFACT_STAGES.get(path), source_stage)
+    ]
+    reason = (
+        f"Authoring session for {source_stage} changed upstream artifact(s): "
+        f"{', '.join(upstream_paths)}."
+    )
+    manifest = store.load_current_manifest()
+    baseline, invalidated = _record_stage_reopen(
+        store=store,
+        manifest=manifest,
+        target_stage=target_stage,
+        reason=reason,
+        actor="orchestrator",
+        action="authoring-upstream-artifacts-reopened",
+        summary="Reopened the earliest stage affected by authoring changes.",
+    )
+    print(f"reopened baseline: {baseline}")
+    _print_list("upstream artifact changes", upstream_paths)
+    _print_list("invalidated gates", invalidated)
+    print(f"active stage: {target_stage}")
+    target_artifact = STAGE_REQUIRED_FILES.get(target_stage)
+    next_command = AUTHORING_APPROVAL_COMMANDS.get(target_stage)
+    if target_artifact and next_command:
+        print(f"next: review {target_artifact}, then run `{next_command}`")
+    return True
+
+
+def _earliest_upstream_authoring_stage(
+    source_stage: str,
+    changed_paths: list[str],
+) -> str | None:
+    candidates = [
+        owner_stage
+        for path in changed_paths
+        for owner_stage in [AUTHORING_ARTIFACT_STAGES.get(path)]
+        if _is_stage_before(owner_stage, source_stage)
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=PUBLIC_STAGE_ORDER.index)
+
+
+def _is_stage_before(stage: str | None, reference_stage: str) -> bool:
+    if stage is None:
+        return False
+    try:
+        return PUBLIC_STAGE_ORDER.index(stage) < PUBLIC_STAGE_ORDER.index(reference_stage)
+    except ValueError:
+        return False
 
 
 PUBLIC_STAGE_BASELINES = {
@@ -1164,8 +1316,32 @@ def _maybe_reopen_from_public_command(
         return False
     if not reason:
         raise StateError("reopen reason is required")
+    baseline, _invalidated = _record_stage_reopen(
+        store=store,
+        manifest=manifest,
+        target_stage=target_stage,
+        reason=reason,
+        actor="human-operator",
+        action="public-stage-reopened",
+        summary=f"Reopened {PUBLIC_STAGE_BASELINES[target_stage]} through public stage command.",
+    )
+    print(f"reopened baseline: {baseline}")
+    print(f"active stage: {target_stage}")
+    return True
+
+
+def _record_stage_reopen(
+    store: StateStore,
+    manifest,
+    target_stage: str,
+    reason: str,
+    actor: str,
+    action: str,
+    summary: str,
+) -> tuple[str, list[str]]:
     baseline = PUBLIC_STAGE_BASELINES[target_stage]
     request_id = f"CR-{len(store.read_change_requests()) + 1:04d}"
+    invalidated = list(CHANGE_BASELINE_INVALIDATED_GATES[baseline])
     request = ChangeRequest(
         request_id=request_id,
         run_id=manifest.run_id,
@@ -1175,10 +1351,9 @@ def _maybe_reopen_from_public_command(
         event="reopened",
         human_approved=True,
         reopened_stage=target_stage,
-        invalidated_gates=list(CHANGE_BASELINE_INVALIDATED_GATES[baseline]),
+        invalidated_gates=invalidated,
     )
     store.append_change_request(request)
-    invalidated = CHANGE_BASELINE_INVALIDATED_GATES[baseline]
     for gate in invalidated:
         if gate not in manifest.invalidated_gates:
             manifest.invalidated_gates.append(gate)
@@ -1190,7 +1365,7 @@ def _maybe_reopen_from_public_command(
             invalidation_id=f"INV-{len(store.read_baseline_invalidations()) + 1:04d}",
             change_request_id=request_id,
             baseline=baseline,
-            invalidated_gates=list(invalidated),
+            invalidated_gates=invalidated,
             invalidated_snapshot_refs=invalidated_snapshots,
         )
     )
@@ -1204,16 +1379,14 @@ def _maybe_reopen_from_public_command(
     )
     store.append_activity(
         ActivityEvent(
-            actor="human-operator",
+            actor=actor,
             stage=target_stage,
-            action="public-stage-reopened",
-            summary=f"Reopened {baseline} through public stage command.",
+            action=action,
+            summary=summary,
             outputs=["change-requests.jsonl", "baseline-invalidations.jsonl"],
         )
     )
-    print(f"reopened baseline: {baseline}")
-    print(f"active stage: {target_stage}")
-    return True
+    return baseline, invalidated
 
 
 def _is_backward_stage_request(active_stage: str, target_stage: str) -> bool:
@@ -1705,10 +1878,72 @@ def _design_review_prompt() -> str:
         [
             "Review docs/detailed-design.md against docs/requirements.md.",
             "",
+            "Read only docs/requirements.md and docs/detailed-design.md.",
+            "Do not inspect source code or modify files.",
             "Report blocker and major findings as structured review issues.",
-            "If you create or modify files, report them in changed_files or",
-            "created_files and provide a concise commit_message. Do not run",
-            "git add or git commit; ElectroBoy owns repository commits.",
+            "If files need to change, report the requested change as an issue.",
+        ]
+    )
+
+
+def _coding_prompt(phase_number: int) -> str:
+    return "\n".join(
+        [
+            f"Implement phase {phase_number} from docs/implementation-plan.md.",
+            "",
+            "Use docs/requirements.md, docs/detailed-design.md, and",
+            "docs/implementation-plan.md as the approved context.",
+            "Inspect only files needed to complete this phase.",
+            "Limit edits to implementation and test files needed for this phase.",
+            "Do not update requirements, design, or plan documents unless the",
+            "operator explicitly asks you to.",
+            "If approved requirements, design, or plan artifacts need to change,",
+            "report the required upstream change and why.",
+            "Report files changed and a concise commit_message when finished.",
+        ]
+    )
+
+
+def _code_review_prompt(phase_number: int) -> str:
+    return "\n".join(
+        [
+            f"Review implementation phase {phase_number}.",
+            "",
+            "Use docs/requirements.md, docs/detailed-design.md, and",
+            "docs/implementation-plan.md as the approved context.",
+            "Review only the changes relevant to this phase.",
+            "Do not modify files.",
+            "Report blocker and major findings as structured review issues.",
+        ]
+    )
+
+
+def _test_review_prompt(phase_number: int) -> str:
+    return "\n".join(
+        [
+            f"Review tests for implementation phase {phase_number}.",
+            "",
+            "Use docs/requirements.md, docs/detailed-design.md, and",
+            "docs/implementation-plan.md as the approved context.",
+            "Inspect tests and test results relevant to this phase.",
+            "Do not modify files.",
+            "Report missing or failing coverage as structured review issues.",
+        ]
+    )
+
+
+def _documentation_prompt() -> str:
+    return "\n".join(
+        [
+            "Review final documentation against the completed codebase.",
+            "",
+            "Use docs/requirements.md, docs/detailed-design.md,",
+            "docs/implementation-plan.md, README.md, and docs/api.md as context.",
+            "Limit documentation edits to README.md and docs/api.md unless the",
+            "operator explicitly asks for another change.",
+            "If requirements, design, or plan artifacts need to change, report",
+            "the required upstream change and why.",
+            "Report files changed and a concise commit_message when finished.",
         ]
     )
 

@@ -82,6 +82,22 @@ class CliTests(unittest.TestCase):
         self.assertIn("authoring stage: requirements", stdout)
         self.assertIn("artifact: docs/requirements.md", stdout)
 
+    def test_requirements_authoring_prompt_limits_startup_scope(self) -> None:
+        with temp_project() as root:
+            store = StateStore(root)
+            store.init_run(run_id="run-1")
+            write_manual_runtime(root)
+
+            code, _stdout, stderr = self.run_cli(["--root", str(root), "requirements"])
+            prompt_files = list((store.run_dir("run-1") / "messages").glob("*-prompt.md"))
+            prompt = prompt_files[0].read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("Target file: docs/requirements.md.", prompt)
+        self.assertIn("Read only docs/requirements.md if it exists.", prompt)
+        self.assertIn("Do not explore the working directory", prompt)
+        self.assertIn("Update only docs/requirements.md", prompt)
+
     def test_requirements_approval_requires_design_author_event(self) -> None:
         with temp_project() as root:
             write_file(root / "docs" / "requirements.md", "# Requirements\n")

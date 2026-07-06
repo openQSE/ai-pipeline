@@ -1065,6 +1065,13 @@ the source of truth for design intent.
 Each agent receives only the context needed for its role, plus enough shared
 state to avoid contradictory work.
 
+Authoring prompts are intentionally narrow. The requirements prompt targets
+`docs/requirements.md`; the design prompt reads requirements and design docs and
+targets `docs/detailed-design.md`; the implementation-plan prompt reads the
+three baseline authoring docs and targets `docs/implementation-plan.md`. Each
+prompt allows the operator to explicitly request a different artifact change,
+but the agent is told not to explore source code or broaden scope on its own.
+
 ### Design Author Context
 
 - Current `docs/requirements.md`.
@@ -1301,6 +1308,14 @@ Completed runs can also iterate through the same mechanism. A new requirement
 or design change after completion creates a change-control request, reopens the
 earliest affected stage, and produces a new set of approved snapshots,
 implementation phases, validation results, and final documentation records.
+
+Interactive authoring sessions use the same mechanism automatically. Before the
+Design Author Agent starts, the orchestrator snapshots the contents of known
+authoring artifacts. When the session exits, the orchestrator compares those
+artifacts with the pre-session contents. If an upstream artifact changed, such
+as `docs/requirements.md` during implementation planning, the orchestrator
+records change control, invalidates downstream gates, sets the active stage to
+the earliest affected stage, and prints the required reapproval command.
 
 Iteration rules:
 

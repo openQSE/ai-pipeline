@@ -434,11 +434,14 @@ electroboy completion bash
 ```
 
 `requirements`, `design`, and `implementation-plan` invoke the configured
-Design Author Agent in an interactive authoring context. The orchestrator
-passes the active artifact, predecessor baselines, open review issues,
-decisions, and current stage state. The command records a draft event when the
-session exits. Approval remains separate so the human operator can review the
-artifact before the pipeline advances.
+Design Author Agent in an interactive authoring context. The orchestrator uses
+stage-specific prompts that keep startup scope narrow: requirements reads and
+updates `docs/requirements.md`, design reads requirements and design docs while
+updating `docs/detailed-design.md`, and implementation planning reads the three
+baseline authoring docs while updating `docs/implementation-plan.md`. The
+operator can explicitly ask for broader artifact edits during the session.
+Approval remains separate so the human operator can review the artifact before
+the pipeline advances.
 
 `design-review` starts the automated design review loop. `code` starts or
 resumes the fully automated implementation loop. By default, it runs every
@@ -505,6 +508,13 @@ classifies the earliest affected baseline, and invalidates downstream gates
 that depended on the old baseline. Classification remains a blocking state
 until the human operator approves reopening. The pipeline then resumes from the
 reopened stage and advances through the normal gate sequence.
+
+Authoring sessions also trigger this path when they change upstream artifacts.
+The orchestrator snapshots known authoring artifacts before invoking the agent
+and compares them after the session exits. If implementation planning changed
+`docs/requirements.md`, for example, the orchestrator reopens requirements,
+invalidates downstream gates, records the artifact changes, and prints the
+required reapproval command.
 
 ## Implementation Plan Maintenance
 
