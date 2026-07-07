@@ -54,7 +54,7 @@ Create a pipeline project and enter its project environment:
 
 ```bash
 ./electroboy new path/to/project
-source path/to/project/bin/activate
+source path/to/project/.electroboy/bin/activate
 electroboy status
 ```
 
@@ -62,7 +62,7 @@ electroboy status
 inside a Git worktree, it initializes a GitHub-ready repository. Existing
 repositories are reused instead of nesting a new repository. The command also
 creates the standard pipeline artifacts, creates `.electroboy/`, and
-installs `path/to/project/bin/activate`.
+installs `path/to/project/.electroboy/bin/activate`.
 
 Define and approve requirements:
 
@@ -151,7 +151,7 @@ as complete.
 Resume an interrupted run from the same project:
 
 ```bash
-source path/to/project/bin/activate
+source path/to/project/.electroboy/bin/activate
 electroboy status
 electroboy code
 ```
@@ -222,7 +222,7 @@ Implemented capabilities:
 - Python package and CLI entry point.
 - ElectroBoy command entrypoint with the `ai-pipeline` alias.
 - `./electroboy new <path>` project creation.
-- Generated project activation scripts under `<project>/bin/activate`.
+- Generated project activation scripts under `<project>/.electroboy/bin/activate`.
 - `electroboy deactivate` shell-safe deactivation.
 - JSON-backed shared state under `.electroboy/shared/`.
 - Local runtime state under `.electroboy/local/`.
@@ -359,10 +359,10 @@ design, and implementation-plan authoring. Codex review roles run with
 with `--sandbox workspace-write` unless the runtime configuration supplies an
 explicit sandbox option.
 
-If `activate_python` is true, `source path/to/project/bin/activate` also
-enters the configured Python environment. `electroboy deactivate` restores the
-pipeline context and only deactivates the Python environment when the pipeline
-owns that activation.
+If `activate_python` is true,
+`source path/to/project/.electroboy/bin/activate` also enters the configured
+Python environment. `electroboy deactivate` restores the pipeline context and
+only deactivates the Python environment when the pipeline owns that activation.
 
 ## State Files
 

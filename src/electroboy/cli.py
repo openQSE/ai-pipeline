@@ -623,7 +623,7 @@ def _cmd_new(args: argparse.Namespace) -> int:
     print(f"project: {project_root}")
     print(f"created run: {manifest.run_id}")
     print(f"active stage: {manifest.active_stage}")
-    print(f"activate: source {project_root / 'bin' / 'activate'}")
+    print(f"activate: source {_project_bin_dir(project_root) / 'activate'}")
     return 0
 
 
@@ -2408,7 +2408,7 @@ def _write_project_gitignore(project_root: Path) -> None:
 
 
 def _write_project_bin(project_root: Path) -> None:
-    bin_dir = project_root / "bin"
+    bin_dir = _project_bin_dir(project_root)
     bin_dir.mkdir(parents=True, exist_ok=True)
     activate = bin_dir / "activate"
     activate.write_text(_activation_script(project_root), encoding="utf-8")
@@ -2417,6 +2417,10 @@ def _write_project_bin(project_root: Path) -> None:
         path = bin_dir / name
         path.write_text(_project_entrypoint_script(), encoding="utf-8")
         path.chmod(0o755)
+
+
+def _project_bin_dir(project_root: Path) -> Path:
+    return project_root / ".electroboy" / "bin"
 
 
 def _write_project_runtime(project_root: Path) -> None:
@@ -2461,7 +2465,7 @@ export _ELECTROBOY_PREVIOUS_PS1
 export _ELECTROBOY_HAD_PS1
 
 ELECTROBOY_PROJECT_ROOT="$_ELECTROBOY_ACTIVATED_ROOT"
-PATH="$ELECTROBOY_PROJECT_ROOT/bin:$PATH"
+PATH="$ELECTROBOY_PROJECT_ROOT/.electroboy/bin:$PATH"
 export ELECTROBOY_PROJECT_ROOT
 export PATH
 
@@ -2569,7 +2573,7 @@ elif [ -n "${{AI_PIPELINE_PROJECT_ROOT:-}}" ]; then
     PROJECT_ROOT="$AI_PIPELINE_PROJECT_ROOT"
 else
     SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-    PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+    PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 fi
 
 RUNTIME_SRC="$PROJECT_ROOT/.electroboy/local/runtime/src"

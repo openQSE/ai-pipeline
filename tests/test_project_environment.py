@@ -35,9 +35,11 @@ class ProjectEnvironmentTests(unittest.TestCase):
             self.assertEqual(code, 0, stderr)
             self.assertIn("active stage: requirements", stdout)
             self.assertTrue((root / ".git").exists())
-            self.assertTrue((root / "bin" / "activate").exists())
-            self.assertTrue((root / "bin" / "ai-pipeline").exists())
-            self.assertTrue((root / "bin" / "electroboy").exists())
+            bin_dir = root / ".electroboy" / "bin"
+            self.assertTrue((bin_dir / "activate").exists())
+            self.assertTrue((bin_dir / "ai-pipeline").exists())
+            self.assertTrue((bin_dir / "electroboy").exists())
+            self.assertFalse((root / "bin" / "activate").exists())
             self.assertTrue(
                 (
                     root
@@ -66,7 +68,7 @@ class ProjectEnvironmentTests(unittest.TestCase):
             env.pop("PYTHONPATH", None)
 
             completed = subprocess.run(
-                [str(root / "bin" / "electroboy"), "--help"],
+                [str(root / ".electroboy" / "bin" / "electroboy"), "--help"],
                 cwd=root,
                 env=env,
                 text=True,
@@ -74,7 +76,9 @@ class ProjectEnvironmentTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
                 check=False,
             )
-            wrapper = (root / "bin" / "electroboy").read_text(encoding="utf-8")
+            wrapper = (root / ".electroboy" / "bin" / "electroboy").read_text(
+                encoding="utf-8"
+            )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("usage: electroboy", completed.stdout)
@@ -85,7 +89,7 @@ class ProjectEnvironmentTests(unittest.TestCase):
             root = Path(tmp) / "test-proj"
             self.assertEqual(self.run_cli(["new", str(root)])[0], 0)
             env = os.environ.copy()
-            env["ACTIVATE"] = str(root / "bin" / "activate")
+            env["ACTIVATE"] = str(root / ".electroboy" / "bin" / "activate")
 
             completed = subprocess.run(
                 [
@@ -120,7 +124,7 @@ class ProjectEnvironmentTests(unittest.TestCase):
             root = Path(tmp) / "test-proj"
             self.assertEqual(self.run_cli(["new", str(root)])[0], 0)
             env = os.environ.copy()
-            env["ACTIVATE"] = str(root / "bin" / "activate")
+            env["ACTIVATE"] = str(root / ".electroboy" / "bin" / "activate")
 
             completed = subprocess.run(
                 [
@@ -147,6 +151,28 @@ class ProjectEnvironmentTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.splitlines(), ["implementation-plan"])
+
+    def test_new_does_not_touch_existing_project_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            existing_bin = root / "bin"
+            existing_bin.mkdir(parents=True)
+            existing_activate = existing_bin / "activate"
+            existing_activate.write_text("project-owned\n", encoding="utf-8")
+
+            code, stdout, stderr = self.run_cli(
+                ["new", str(root), "--run-id", "run-1"]
+            )
+
+            self.assertEqual(code, 0, stderr)
+            self.assertIn(
+                f"activate: source {root / '.electroboy' / 'bin' / 'activate'}",
+                stdout,
+            )
+            self.assertEqual(
+                existing_activate.read_text(encoding="utf-8"), "project-owned\n"
+            )
+            self.assertTrue((root / ".electroboy" / "bin" / "activate").exists())
 
     def test_new_reuses_existing_git_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
