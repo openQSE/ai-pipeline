@@ -1575,6 +1575,16 @@ equivalent to:
 codex resume <session-id> --cd <project-root> --sandbox workspace-write
 ```
 
+A known provider session id can be attached directly.
+
+```bash
+electroboy requirements --session-id <session-id>
+```
+
+ElectroBoy writes the explicit id to the local session record before launching
+the agent. A supplied id replaces any existing id for the same run, stage, and
+role. Later authoring commands then reuse the attached id automatically.
+
 If the provider session is unavailable, expired, archived, or stored only on a
 different machine, ElectroBoy starts a new agent session with a recovery prompt.
 That prompt uses the last shared session summary, the current stage artifact,

@@ -201,10 +201,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="author or resume requirements definition",
     )
     requirements.add_argument("--reason", help="reason for reopening requirements")
+    requirements.add_argument(
+        "--session-id",
+        help="provider session id to record and resume for requirements authoring",
+    )
     subparsers.add_parser("requirements-approve", help="approve requirements")
 
     design = subparsers.add_parser("design", help="author or resume design")
     design.add_argument("--reason", help="reason for reopening design")
+    design.add_argument(
+        "--session-id",
+        help="provider session id to record and resume for design authoring",
+    )
     subparsers.add_parser("design-review", help="run design review")
     subparsers.add_parser("design-approve", help="approve reviewed design")
 
@@ -215,6 +223,10 @@ def build_parser() -> argparse.ArgumentParser:
     implementation_plan.add_argument(
         "--reason",
         help="reason for reopening implementation planning",
+    )
+    implementation_plan.add_argument(
+        "--session-id",
+        help="provider session id to record and resume for plan authoring",
     )
     subparsers.add_parser("plan-approve", help="approve implementation plan")
 
@@ -695,6 +707,7 @@ def _cmd_authoring_stage(
         context_paths=_authoring_inputs(stage),
         session_stage=stage,
         session_artifact=artifact,
+        explicit_session_id=getattr(args, "session_id", None),
     )
     changed_artifacts = _changed_authoring_artifacts(store.root, artifact_snapshot)
     if not result.ok:
@@ -1834,13 +1847,25 @@ def _invoke_agent_role(
     context_paths: list[str],
     session_stage: str | None = None,
     session_artifact: str | None = None,
+    explicit_session_id: str | None = None,
 ) -> tuple[AgentResult, str, str | None]:
     manifest = store.load_current_manifest()
     event_id = f"agent-{len(store.read_activity()) + 1:05d}"
     session_record = (
         store.read_session_record(session_stage, role) if session_stage else None
     )
-    provider_session_id = _session_provider_session_id(session_record)
+    provider_session_id = _explicit_session_id(explicit_session_id)
+    if session_stage and provider_session_id:
+        _write_attached_agent_session_record(
+            store,
+            session_stage,
+            role,
+            session_artifact,
+            event_id,
+            provider_session_id,
+        )
+    if provider_session_id is None:
+        provider_session_id = _session_provider_session_id(session_record)
     if session_stage and session_record and not provider_session_id:
         prompt = _prompt_with_session_recovery(
             store,
@@ -1900,6 +1925,13 @@ def _invoke_agent_role(
         )
     )
     return result, event_id, issue_file
+
+
+def _explicit_session_id(session_id: str | None) -> str | None:
+    if session_id is None:
+        return None
+    session_id = session_id.strip()
+    return session_id or None
 
 
 def _session_provider_session_id(record: dict[str, object] | None) -> str | None:
@@ -1995,7 +2027,40 @@ def _write_agent_session_record(
             "artifact": artifact,
             "last_event_id": event_id,
             "message_ref": f"messages/{event_id}-response.md",
-            "resumed_session": result.resumed_session,
+            "resumed_session": (
+                result.resumed_session or invocation.provider_session_id is not None
+            ),
+        },
+    )
+
+
+def _write_attached_agent_session_record(
+    store: StateStore,
+    stage: str,
+    role: str,
+    artifact: str | None,
+    event_id: str,
+    session_id: str,
+) -> None:
+    now = utc_now()
+    manifest = store.load_current_manifest()
+    store.write_session_record(
+        stage,
+        role,
+        {
+            "provider": None,
+            "session_id": session_id,
+            "stage": stage,
+            "role": role,
+            "run_id": manifest.run_id,
+            "status": "attached",
+            "started_at": now,
+            "last_seen_at": now,
+            "cwd": str(store.root),
+            "artifact": artifact,
+            "last_event_id": event_id,
+            "message_ref": f"messages/{event_id}-response.md",
+            "resumed_session": True,
         },
     )
 

@@ -12,12 +12,15 @@ Operator workflow commands:
   `.electroboy/`, and installs `<path>/bin/activate`.
 - `status` prints active stage, next stage, active phase, completed gates,
   invalidated gates, open requests, open issues, and blocked gates.
-- `requirements [--reason <text>]` starts or resumes requirements authoring.
+- `requirements [--reason <text>] [--session-id <id>]` starts or resumes
+  requirements authoring.
 - `requirements-approve` records human and Design Author approval.
-- `design [--reason <text>]` starts or resumes design authoring.
+- `design [--reason <text>] [--session-id <id>]` starts or resumes design
+  authoring.
 - `design-review` runs the design-review stage gate.
 - `design-approve` records human design acceptance.
-- `implementation-plan [--reason <text>]` starts or resumes planning.
+- `implementation-plan [--reason <text>] [--session-id <id>]` starts or
+  resumes planning.
 - `plan-approve` records human and Design Author plan approval.
 - `code [--reason <text>] [--phased]` starts or resumes implementation work.
 - `phase commit <n> --sha <commit-sha>` records a reviewed phase commit after
@@ -54,6 +57,10 @@ ElectroBoy passes that id back to the runtime. Codex interactive sessions use
 `codex resume <session-id>`. When no provider session id is available,
 ElectroBoy starts a new session with recovery context from the local session
 record, shared session summary when present, and the current stage artifact.
+Passing `--session-id <id>` writes that id to the stage's local session record
+before the agent starts. If a record already exists for the same run, stage,
+and role, the explicit id replaces it and becomes the id used by later
+authoring resumes.
 
 ## Stage Commands
 

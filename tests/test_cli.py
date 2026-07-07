@@ -146,6 +146,71 @@ class CliTests(unittest.TestCase):
         self.assertIn("Current docs/requirements.md:", prompt)
         self.assertIn("REQ-1", prompt)
 
+    def test_requirements_authoring_accepts_explicit_session_id(self) -> None:
+        session_id = "019f3cb6-60c3-7320-896b-e5eb9a6a8dd2"
+        with temp_project() as root:
+            store = StateStore(root)
+            store.init_run(run_id="run-1")
+            write_manual_runtime(root)
+
+            code, _stdout, stderr = self.run_cli(
+                [
+                    "--root",
+                    str(root),
+                    "requirements",
+                    "--session-id",
+                    session_id,
+                ]
+            )
+            session = store.read_session_record("requirements", "design_author")
+
+        self.assertEqual(code, 0, stderr)
+        self.assertIsNotNone(session)
+        session = session or {}
+        self.assertEqual(session["session_id"], session_id)
+        self.assertTrue(session["resumed_session"])
+
+    def test_requirements_session_id_overwrites_existing_record(self) -> None:
+        stale_session_id = "019f3cb6-60c3-7320-896b-e5eb9a6a8dd2"
+        new_session_id = "019f3cc1-8f78-70d3-83ff-29ef45e331b8"
+        with temp_project() as root:
+            store = StateStore(root)
+            store.init_run(run_id="run-1")
+            write_manual_runtime(root)
+            store.write_session_record(
+                "requirements",
+                "design_author",
+                {
+                    "provider": "codex",
+                    "session_id": stale_session_id,
+                    "stage": "requirements",
+                    "role": "design_author",
+                    "run_id": "run-1",
+                    "status": "interrupted",
+                    "started_at": "old",
+                    "last_seen_at": "old",
+                    "cwd": str(root),
+                    "artifact": "docs/requirements.md",
+                },
+            )
+
+            code, _stdout, stderr = self.run_cli(
+                [
+                    "--root",
+                    str(root),
+                    "requirements",
+                    "--session-id",
+                    new_session_id,
+                ]
+            )
+            session = store.read_session_record("requirements", "design_author")
+
+        self.assertEqual(code, 0, stderr)
+        self.assertIsNotNone(session)
+        session = session or {}
+        self.assertEqual(session["session_id"], new_session_id)
+        self.assertNotEqual(session["session_id"], stale_session_id)
+
     def test_requirements_approval_requires_design_author_event(self) -> None:
         with temp_project() as root:
             write_file(root / "docs" / "requirements.md", "# Requirements\n")
